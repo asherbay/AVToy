@@ -1,10 +1,6 @@
 import * as Tone from "tone";
 
 export function createEngine() {
-
-
- 
-
     function trill({
         // pitch / trill
         pitch = "C4",
@@ -20,13 +16,10 @@ export function createEngine() {
         filterMin = 300,
         filterMax = 800,
         filterModRate = 0.25,
-        Q = 1.0,
+        Q = 3.0,
 
         // FM params
         harmonicity = 1.0,
-        harmModMin = 0.0,
-        harmModMax = 2.0,
-        harmModRate = 0.2,
 
         // output / FX
         gainLevel = 0.05,
@@ -51,7 +44,7 @@ export function createEngine() {
         const filter = new Tone.Filter({
             frequency: 500,
             type: "bandpass",
-            Q: 3.0,
+            Q,
         });
 
         const filterLfo = new Tone.LFO({
@@ -122,14 +115,6 @@ export function createEngine() {
             osc.partials = out;
         }
        
-        function lerp(a,b,t){ return a + (b-a)*t; }
-
-        function morphPartials(from, to, t){
-            const n = Math.max(from.length, to.length);
-            const out = new Array(n).fill(0).map((_,i)=>lerp(from[i]||0, to[i]||0, t));
-            osc.partials = out;
-        }
-
         // const metal = new Tone.MetalSynth({
         //     frequency: 200,
         //     envelope: { attack: 0.001, decay: 10.4, release: 0.1 },
@@ -174,7 +159,7 @@ export function createEngine() {
         });
 
         const trillModLfo = new Tone.LFO({
-            frequency: harmModRate,
+            frequency: rateModRate,
             type: "sine",
             min: rateMin,
             max: rateMax,

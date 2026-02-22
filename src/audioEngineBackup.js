@@ -2,7 +2,7 @@ import * as Tone from "tone";
 
 export function createEngine() {
 
-    function trill(pitch="C4", pitchRange=200, rateMin=2, rateMax=8, rateModRate=0.25, filterMin=300, filterMax=800, filterModRate=0.25, harmonicity=1.0, harmModMin=0., harmModMax=2.0, harmModRate=0.2) {
+    function trill(pitch="C4", pitchRange=200, rateMin=2, rateMax=8, rateModRate=0.25, filterMin=300, filterMax=800, filterModRate=0.25) {
         const filter = new Tone.Filter({
             frequency: 500,
             type: "bandpass",

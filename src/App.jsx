@@ -4,6 +4,14 @@ import * as Tone from "tone";
 import { createEngine } from "./audioEngine";
 import { mountSketch } from "./sketch";
 
+function linMap(x, min, max) {
+  return min + x * (max - min);
+}
+
+function randomItem(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
 function App() {
   const engineRef = useRef(null);
   const [started, setStarted] = useState(false);
@@ -20,10 +28,14 @@ function App() {
       if (eng) {
         try {
           eng.stop?.();
-        } catch {}
+        } catch (err) {
+          console.error("Failed to stop audio engine", err);
+        }
         try {
           eng.dispose?.();
-        } catch {}
+        } catch (err) {
+          console.error("Failed to dispose audio engine", err);
+        }
       }
       engineRef.current = null;
     };
@@ -37,10 +49,6 @@ function App() {
       // hook these into your Tone engine here
       // e.g. engineRef.current?.forEach(v => v.setSomething(ctl.x))
       engineRef.current?.forEach((v) => {
-        // X controls filter cutoff (log mapping feels natural)
-        const partials =
-          linMap(ctl.x, 0., 0.5) < 0. ? 0. : linMap(ctl.x, 0., 0.5);
-
         // Y controls reverb wet
         const wet =
           linMap(Math.abs(ctl.y), 0, 1.0) < 0.01
@@ -84,6 +92,7 @@ function App() {
 
   const handleSlider = (e) => {
     const t = Number(e.target.value);
+    setCombFbGain(t);
     engineRef.current?.forEach((v) => v.setMorphAmount(t));
   };
 
@@ -98,19 +107,6 @@ function App() {
 
     console.log("audio ready");
   };
-
-  function linMap(x, min, max) {
-    return min + x * (max - min);
-  }
-
-  function expMap(x, min, max) {
-    return min * Math.pow(max / min, x);
-  }
-
-  function randomItem(arr) {
-    return arr[Math.floor(Math.random() * arr.length)];
-  }
-
   return (
     <div>
       <button onClick={handleClick} disabled={started}>
