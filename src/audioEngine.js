@@ -9,6 +9,7 @@ export function createEngine() {
         // pitch / trill
         pitch = "C4",
         pitchRange = 200,
+        secondaryPitch = "G4",
 
         // trill rate modulation
         rateMin = 2,
@@ -129,30 +130,30 @@ export function createEngine() {
             osc.partials = out;
         }
 
-        const metal = new Tone.MetalSynth({
-            frequency: 200,
-            envelope: { attack: 0.001, decay: 10.4, release: 0.1 },
-            harmonicity: 3.1,
-            modulationIndex: 32,
-            resonance: 6000,
-            octaves: 2
-        });
+        // const metal = new Tone.MetalSynth({
+        //     frequency: 200,
+        //     envelope: { attack: 0.001, decay: 10.4, release: 0.1 },
+        //     harmonicity: 3.1,
+        //     modulationIndex: 32,
+        //     resonance: 6000,
+        //     octaves: 2
+        // });
 
-        const comb = new Tone.FeedbackCombFilter({ delayTime: 0.012, resonance: 0.6 });
-        const verb = new Tone.Reverb({ decay: 8, wet: 0.5 });
-        const out = new Tone.Gain(0.1).toDestination();
+        // const comb = new Tone.FeedbackCombFilter({ delayTime: 0.012, resonance: 0.6 });
+        // const verb = new Tone.Reverb({ decay: 8, wet: 0.5 });
+        // const out = new Tone.Gain(0.1).toDestination();
 
-        const metalLfo = new Tone.LFO({ 
-            frequency: 0.2,
-            min: 150,
-            max: 400,
-        });
+        // const metalLfo = new Tone.LFO({ 
+        //     frequency: 0.2,
+        //     min: 150,
+        //     max: 400,
+        // });
 
-        metalLfo.connect(metal.frequency);
+        // metalLfo.connect(metal.frequency);
 
-        metal.connect(comb);
-        comb.connect(verb);
-        verb.connect(out);
+        // metal.connect(comb);
+        // comb.connect(verb);
+        // verb.connect(out);
 
 
         /* ================= GAIN ================= */
@@ -219,20 +220,38 @@ export function createEngine() {
             filterLfo,
             loop,
             limiter,
-            metal,
-            comb,
-            verb,
-            out,
-            metalLfo,
+            // metal,
+            // comb,
+            // verb,
+            // out,
+            // metalLfo,
             vib,
             vibLfo,
     
-            triggerMetal() {
-                metal.triggerAttackRelease("C0", 10);
-            },
+            // triggerMetal() {
+            //     metal.triggerAttackRelease("C0", 10);
+            // },
 
             setMorphTarget,
             setMorphAmount,   
+
+            getPrimaryPitch() {
+                // console.log("primary pitch:", pitch);
+                //return pitch;
+                return Tone.Frequency(pitch).toFrequency();
+            },
+
+            getSecondaryPitch() {
+                // console.log("secondary pitch:", secondaryPitch);
+                //return secondaryPitch;
+                return Tone.Frequency(secondaryPitch).toFrequency();
+            },
+
+
+            slideToPitch(pitchTarget, time = 1) {
+                osc.frequency.exponentialRampToValueAtTime(pitchTarget, `+0.5`, time);
+               // console.log(`Sliding to ${pitchTarget} over ${time} seconds`);
+            },
             
             startTransport() {
                 if (Tone.Transport.state !== "started") {
@@ -248,7 +267,7 @@ export function createEngine() {
                 filterLfo.start();
                 loop.start();
                
-                metalLfo.start();
+                // metalLfo.start();
                 vibLfo.start();
             },
 
@@ -260,7 +279,7 @@ export function createEngine() {
                 filterLfo.stop();
                 gainLfo.stop();
                 Tone.Transport.stop();
-                metalLfo.stop();
+                // metalLfo.stop();
                 vibLfo.stop();
             },
 
@@ -276,11 +295,11 @@ export function createEngine() {
                 filterLfo.dispose();
                 loop.dispose();
                 limiter.dispose();
-                metal.dispose();
-                comb.dispose();
-                verb.dispose(); 
-                out.dispose();
-                metalLfo.dispose();
+                // metal.dispose();
+                // comb.dispose();
+                // verb.dispose(); 
+                // out.dispose();
+                // metalLfo.dispose();
                 vib.dispose();
                 vibLfo.dispose();
             },
@@ -289,6 +308,7 @@ export function createEngine() {
     }
     const voice1 = trill({
         pitch: "D4",
+        secondaryPitch: "C4",
         pitchRange: 0,
         rateMin: 1,
         rateMax: 7,
@@ -306,6 +326,7 @@ export function createEngine() {
 
     const voice2 = trill({
         pitch: "C3",
+        secondaryPitch: "Bb2",
         pitchRange: 0,
         rateMin: 0.25,
         rateMax: 0.5,
@@ -319,21 +340,23 @@ export function createEngine() {
         gainMax: 0.5,
     });
 
-    const voice3 = trill({
-        pitch: "C5",
-        pitchRange: 0,
-        rateMin: 0.2,
-        rateMax: 3,
-        filterMin: 800,
-        filterMax: 1600,
-        filterModRate: 0.5,
-        modIndexMin: 0.0,
-        modIndexMax: 0.15,
-        harmonicity: 0.66,
-        reverbWet: 0.,
-        gainLfoRate: 0.5,
-        gainMax: 0.3,
 
+
+    const voice3 = trill({
+        pitch: "F4",
+        secondaryPitch: "G4",
+        pitchRange: 0,
+        rateMin: 1,
+        rateMax: 7,
+        filterMin: 500,
+        filterMax: 800,
+        filterModRate: 0.15,
+        modIndexMin: 0.0,
+        modIndexMax: 2.5,
+        harmonicity: 4.,
+        reverbWet: 0.,
+        gainLfoRate: 0.22,
+        gainMax: 0.1,
     });
 
   return [voice1, voice2, voice3]

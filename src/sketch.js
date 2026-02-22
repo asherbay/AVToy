@@ -1,6 +1,6 @@
 import p5 from "p5";
 
-export function mountSketch(containerEl, onControl) {
+export function mountSketch(containerEl, onControl, onClick) {
   return new p5((p) => {
     let lastX = 0;
     let lastY = 0;
@@ -38,6 +38,17 @@ export function mountSketch(containerEl, onControl) {
 
       lastX = p.mouseX;
       lastY = p.mouseY;
+    };
+
+    p.mouseClicked = () => {
+      console.log("mouse clicked");
+
+      if (onClick) {
+        onClick({
+          x: Math.abs(p.mouseX / p.width),
+          y: Math.abs(p.mouseY / p.height),
+        });
+      }
     };
   }, containerEl);
 }
