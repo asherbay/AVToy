@@ -2,6 +2,29 @@ import p5 from "p5";
 
 export function mountSketch(containerEl, onControl, onClick) {
   return new p5((p) => {
+
+
+    function randShape(numPoints, sHeight, sWidth) {
+      var s = [];
+      for (var i = 0; i < numPoints; i++) {
+        s.push([p.random(sWidth * 1), p.random(sHeight * 1)]);
+      }
+      return s;
+    }
+    function blob() {      
+      var shape = randShape(10, p.height, p.width);
+      p.noFill();
+      p.stroke(255);
+      p.beginShape();
+      for (var i = 0; i < shape.length; i++) {
+        var s = shape[i];
+        p.curveVertex(s[0], s[1]);
+      }
+      p.endShape(p.CLOSE);
+    }
+
+
+
     let lastX = 0;
     let lastY = 0;
 
@@ -16,7 +39,7 @@ export function mountSketch(containerEl, onControl, onClick) {
       p.fill(0, 20);
       p.noStroke();
       p.rect(0, 0, p.width, p.height);
-
+      
       // mouse velocity
       const dx = p.mouseX - lastX;
       const dy = p.mouseY - lastY;
@@ -38,6 +61,7 @@ export function mountSketch(containerEl, onControl, onClick) {
 
       lastX = p.mouseX;
       lastY = p.mouseY;
+      blob()
     };
 
     p.mouseClicked = () => {

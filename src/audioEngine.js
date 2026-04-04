@@ -1,6 +1,10 @@
 import * as Tone from "tone";
 
 export function createEngine() {
+
+    function randomItem(arr) {
+        return arr[Math.floor(Math.random() * arr.length)];
+    }
     function trill({
         // pitch / trill
         pitch = "C4",
@@ -81,6 +85,23 @@ export function createEngine() {
         });
         vibLfo.connect(vib.frequency);
 
+
+
+        // FB delay loop for extra texture
+        const fbDelay = new Tone.Delay(0.2);
+        const fbGain = new Tone.Gain(0.35);
+        const fbFilter = new Tone.Filter(1000, "lowpass");
+        const drive = new Tone.Distortion(0.2);
+
+        
+
+        // feedback path
+        fbDelay.connect(fbFilter);
+        fbFilter.connect(drive);
+        drive.connect(fbGain);
+        fbGain.connect(fbDelay);
+
+
         /* ================= OSC ================= */
 
         const osc = new Tone.FMOscillator({
@@ -92,6 +113,17 @@ export function createEngine() {
         });
 
         osc.partials = [1, 0, 0., 0.0]; // harmonic amplitudes
+
+        const detuneOsc = new Tone.FMOscillator({
+            frequency: pitch,
+            type: "sine",
+            modulationType: "triangle",
+            harmonicity,
+            modulationIndex: 0.,
+            detune: 30,
+        });
+
+        detuneOsc.partials = [1, 0, 0., 0.0]; // harmonic amplitudes
 
         function randomPartials(count = 8) {
             const partials = [];
@@ -144,8 +176,9 @@ export function createEngine() {
         /* ================= GAIN ================= */
 
         const gain = new Tone.Gain(gainLevel);
-        const gainLfo = new Tone.LFO(gainLfoRate, 0.1, gainMax);
+        const gainLfo = new Tone.LFO(gainLfoRate, 0., gainMax);
         gainLfo.connect(gain.gain);
+        const duckGain = new Tone.Gain(1.0);
         const limiter = new Tone.Limiter(-6);
         
 
@@ -183,18 +216,29 @@ export function createEngine() {
         /* ================= ROUTING ================= */
 
         osc.connect(vib);
+        detuneOsc.connect(vib);
         vib.connect(filter);
-        filter.connect(delay);
+        filter.connect(duckGain);
+        duckGain.connect(delay);
         delay.connect(reverb);
         reverb.connect(gain);
-        // gain.toDestination();
+        gain.connect(fbDelay);
         gain.connect(limiter);
+        fbDelay.connect(limiter);
+        // gain.toDestination();
         limiter.toDestination();
 
         /* ================= API ================= */
 
+         // seconds
+
+
+        //DOESNT WORK CUZ VOICES ARE NOT AWARE OF EACH OTHER, NEED TO MOVE THIS LOGIC OUTSIDE
+        
+
         return {
             osc,
+            detuneOsc,
             filter,
             delay,
             reverb,
@@ -204,7 +248,12 @@ export function createEngine() {
             trillModLfo,
             filterLfo,
             loop,
+            fbDelay,
+            fbGain,
+            fbFilter,
+            drive,
             limiter,
+            duckGain,
             // metal,
             // comb,
             // verb,
@@ -219,6 +268,7 @@ export function createEngine() {
 
             setMorphTarget,
             setMorphAmount,   
+            
 
             getPrimaryPitch() {
                 // console.log("primary pitch:", pitch);
@@ -234,7 +284,9 @@ export function createEngine() {
 
 
             slideToPitch(pitchTarget, time = 1) {
-                osc.frequency.exponentialRampToValueAtTime(pitchTarget, `+0.5`, time);
+                console.log("attempting pitch slide");
+                osc.frequency.exponentialRampToValueAtTime(pitchTarget, `+1.5`, time);
+                detuneOsc.frequency.exponentialRampToValueAtTime(pitchTarget, `+2.5`, time);
                // console.log(`Sliding to ${pitchTarget} over ${time} seconds`);
             },
             
@@ -246,6 +298,8 @@ export function createEngine() {
 
             start() {
                 osc.start();
+                detuneOsc.start();
+                
                 gainLfo.start();
                 trillLfo.start();
                 trillModLfo.start();
@@ -254,10 +308,12 @@ export function createEngine() {
                
                 // metalLfo.start();
                 vibLfo.start();
+                //pitchSlideLoop.start();
             },
 
             stop() {
                 osc.stop();
+                detuneOsc.stop();
                 loop.stop();
                 trillLfo.stop();
                 trillModLfo.stop();
@@ -266,6 +322,7 @@ export function createEngine() {
                 Tone.Transport.stop();
                 // metalLfo.stop();
                 vibLfo.stop();
+                //pitchSlideLoop.stop();
             },
 
             dispose() {
@@ -280,6 +337,11 @@ export function createEngine() {
                 filterLfo.dispose();
                 loop.dispose();
                 limiter.dispose();
+                duckGain.dispose();
+                fbDelay.dispose();
+                fbGain.dispose();
+                fbFilter.dispose();
+                drive.dispose();
                 // metal.dispose();
                 // comb.dispose();
                 // verb.dispose(); 
@@ -298,12 +360,12 @@ export function createEngine() {
         rateMin: 1,
         rateMax: 7,
         filterMin: 500,
-        filterMax: 1500,
+        filterMax: 1800,
         filterModRate: 0.2,
         modIndexMin: 0.0,
-        modIndexMax: 1.0,
+        modIndexMax: 0.5,
         harmonicity: 1.0,
-        reverbWet: 0.,
+        reverbWet: 0.5,
         gainLfoRate: 0.4,
         gainMax: 0.5,
     });
@@ -316,10 +378,10 @@ export function createEngine() {
         rateMin: 0.25,
         rateMax: 0.5,
         filterMin: 200,
-        filterMax: 600,
+        filterMax: 1000,
         filterModRate: 0.3,
         modIndexMin: 0.0,
-        modIndexMax: 2.0,
+        modIndexMax: 0.5,
         harmonicity: 0.5,
         gainLfoRate: 0.24,
         gainMax: 0.5,
@@ -333,17 +395,98 @@ export function createEngine() {
         pitchRange: 0,
         rateMin: 1,
         rateMax: 7,
-        filterMin: 500,
-        filterMax: 800,
+        filterMin: 400,
+        filterMax: 1200,
         filterModRate: 0.15,
         modIndexMin: 0.0,
-        modIndexMax: 2.5,
+        modIndexMax: 0.7,
         harmonicity: 4.,
-        reverbWet: 0.,
+        reverbWet: 0.4,
         gainLfoRate: 0.22,
         gainMax: 0.1,
     });
 
-  return [voice1, voice2, voice3]
+    const start = () => {
+        Tone.Transport.start();
+        pitchSlideLoop.start();
+        duckLoop.start();
+    }
+
+    const stop = () => {
+        Tone.Transport.stop();
+        pitchSlideLoop.stop();
+        duckLoop.stop();
+    }
+
+    const voices = [voice1, voice2, voice3];
+
+    const slideProbability = 0.25;
+    const slideCheckInterval = 2.0;
+
+    const pitchSlideLoop = new Tone.Loop((time) => {
+        if (Math.random() < slideProbability) {
+            
+            const v = randomItem(voices);
+            let primaryPitch = v.getPrimaryPitch();
+            let secondaryPitch = v.getSecondaryPitch();
+            let targetPitch;
+            // console.log("frequency: ", v.osc.frequency.value, "primary: ", primaryPitch);
+
+            if (v.osc.frequency.value == primaryPitch) {
+            // console.log("voice at primary pitch");
+                targetPitch = secondaryPitch;
+            } else {
+            // console.log("voice not at primary pitch");
+                targetPitch = primaryPitch;
+            }
+            if (v) {
+                v.slideToPitch?.(targetPitch, Math.random() * 2.5 + 1.5);
+            }
+        }
+        }, slideCheckInterval);
+
+        
+
+
+    const duckProbability = 0.75;
+    const duckCheckInterval = 4.0;
+    const duckLoop = new Tone.Loop((time) => {
+        if (Math.random() < duckProbability) {
+            
+            const v = randomItem(voices);
+            if (v.duckGain.gain.value >= 0.9) {
+                console.log("ducking voice");
+                const now = Tone.now();
+                const start = now + 0.01;
+                const duckTime = Math.random() * 3.5 + 0.75;
+
+                // duck immediately
+                v.duckGain.gain.cancelAndHoldAtTime(start);
+                v.duckGain.gain.rampTo(0.05, duckTime, start); // down over 1s
+
+                const unduckTime = Math.random() * 4.5 + 1.75;
+                // schedule unduck after `duration` seconds
+                const eventId = Tone.Transport.scheduleOnce((time) => {
+                    console.log("unducking voice");
+                    v.duckGain.gain.cancelAndHoldAtTime(time);
+                    v.duckGain.gain.rampTo(1.0, duckTime, time); // up over 2s
+                }, `+${unduckTime}`);
+
+                // optional: store eventId if you might cancel later
+                // lastUnduckEventId = eventId;
+                // duck(v);
+            } 
+        }
+        }, duckCheckInterval);
+
+    const audioEngine = {
+        voices,
+        start,
+        stop,
+    }
+
+  return audioEngine;
+
+  // NEED TO CHANGE APP.JSX TO ACCOMODATE THE AUDIOENGINE OBJECT INSTEAD OF JUST VOICES
   
 }
