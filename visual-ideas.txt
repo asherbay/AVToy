@@ -1,0 +1,100 @@
+I’d aim for a stateful visual ecology, not a single hero effect.
+The strongest pattern for your constraints is: one low-res simulation + one memory/feedback layer + one color system + one explicit gesture layer. That gives you the “alive / textural / trippy” feel from simple local rules, which is very much in the spirit of Lieberman’s “poetic computations” and his sketch-based exploration of light, shadow, refraction, and illumination. (exploratorium.edu (https://www.exploratorium.edu/exhibits/sketches?utm_source=chatgpt.com))
+The best directions to pursue
+1. Physarum / slime-mold agents + curl-noise flow + feedback
+This is my top pick.
+The core rule is tiny: agents sample trail ahead / left / right, turn toward the stronger signal, move, deposit trail; the trail field then diffuses and decays. Jeff Jones’ Physarum-inspired work is exactly about complex emergent pattern formation from simple particle-like agents, and Bridson’s curl-noise paper is a classic lightweight alternative to full fluid simulation because it gives an efficient, exactly incompressible turbulent-looking flow field. (PubMed (https://pubmed.ncbi.nlm.nih.gov/20067403/?utm_source=chatgpt.com))
+Why it fits your brief:
+    •    It feels alive immediately: veins, mycelium, capillaries, smoke-ink, nervous tissue.
+    •    It is textural, because structure comes from accumulation and erosion, not from drawing clean primitives.
+    •    It supports nonlinearity well: tiny parameter changes can shift from soft tissue to branching labyrinth to pulsing mesh.
+    •    It plays beautifully with feedback, because old trails can re-enter the system as memory.
+How I’d use interactivity:
+    •    Mouse position: local attractor, repeller, or vortex center.
+    •    Mouse speed: increase local turbulence, sensor angle, or trail diffusion.
+    •    Click-drag: lay down a nutrient filament or repellent scar that the colony has to react to.
+    •    Release: brief “bloom” event where turn angle or sensor distance increases so the network flowers outward, then settles.
+This is also a good match for your “additional gesture on top of the background” idea: the drag can both perturb the field and render a visible luminous ribbon whose residue becomes food/poison for the agents.
+2. Excitable media / cyclic cellular automata for psychedelic wave logic
+If you want less “vein network” and more hallucinated signal propagation, go here.
+Excitable media naturally produce traveling waves and spirals; the Belousov–Zhabotinsky reaction is the iconic visual example. A very simple way to approximate that look is a Greenberg–Hastings or cyclic cellular automaton: a small discrete-state grid with quiescent / excited / refractory logic. These models are classic simple prototypes for periodic wave phenomena in excitable media. (Scholarpedia (https://www.scholarpedia.org/article/Excitable_media?utm_source=chatgpt.com))
+Why it fits:
+    •    Very strong trippy factor.
+    •    Easy to make it feel like a living membrane or dreaming brain.
+    •    Extremely good for gesture-response: a drag path can literally “write” excitation into the field.
+How I’d use it:
+    •    Background system is continuously simmering near threshold.
+    •    Drag writes a band of excited cells.
+    •    Speed changes refractory time or neighborhood threshold.
+    •    A little anisotropy, noise, or feedback transform prevents it from feeling like a textbook CA and pushes it toward organic mandalas.
+This one is probably the cheapest computationally of the three main options.
+3. Gray–Scott reaction-diffusion as the slow biological substrate
+If the target is skin / coral / lichen / mitosis / chemical garden, this is the one.
+Reaction-diffusion systems are about local transformation plus diffusion, and Pearson’s Gray–Scott paper is famous because a very simple two-field system produces irregular spatiotemporal patterns, including self-replicating spots. (Scholarpedia (https://www.scholarpedia.org/article/Reaction-diffusion_systems?utm_source=chatgpt.com))
+Why it fits:
+    •    The output already feels “grown,” not “drawn.”
+    •    It is fantastic for a background organism that is always changing even when the user is idle.
+    •    It gives you a strong sense of material.
+How I’d use it:
+    •    Not full-screen, full-res.
+    •    Run it as a low-res substrate.
+    •    Let drag inject one of the chemicals along the path.
+    •    Put either particles or feedback on top so it does not feel too academic.
+If you choose this route, I would still add a second simple system on top. Reaction-diffusion alone is beautiful, but the app will feel more responsive if something faster and more gestural sits above it.
+What I would not use first
+I would not start with a full Navier–Stokes fluid solver. For your constraint set, curl-noise-style procedural flow gives you much of the motion language you want at far lower complexity and cost. (Computer Science at UBC (https://www.cs.ubc.ca/~rbridson/docs/bridson-siggraph2007-curlnoise.pdf?utm_source=chatgpt.com))
+I also would not make Lenia the first prototype. Lenia is gorgeous and genuinely lifelike, but it is already a continuous artificial-life system meant to support autonomous “creatures.” I would treat it as phase two, after the interaction language is working. (arXiv (https://arxiv.org/abs/1812.05433?utm_source=chatgpt.com))
+Color: make it a system, not a skin
+Use a perceptual color space for palette control. Oklab was designed to better track perceived lightness, chroma, and hue, and HSLuv is a human-friendly alternative to HSL built around perceptual lightness/hue behavior and gamut bounds. Those are much better spaces for generative palette design than naive HSB sliders. (Bottosson (https://bottosson.github.io/posts/oklab/?utm_source=chatgpt.com))
+What I’d do in practice:
+    •    Keep lightness in a narrower band than you think.
+    •    Let chroma and hue do most of the motion.
+    •    Use analogous drift for the body of the piece.
+    •    Use complementary or split-complement accents only on impacts, edges, or high-energy regions.
+    •    Make a separate low-res hue-drift field that diffuses slowly, so color lags behind structure like staining or bioluminescence.
+Good mappings:
+    •    Slime mold: hue from trail age or local flow angle; chroma from density.
+    •    Excitable CA: hue from phase/state; lightness from excitation strength.
+    •    Reaction-diffusion: hue from chemical ratio; chroma from gradient magnitude.
+That gives you color that feels like it is growing through the system, not sitting on top of it.
+Feedback and repetition: this is where the GEB feeling comes from
+For the “strange loop / repetition with change” part, I would absolutely use frame feedback.
+Technically this is just an offscreen buffer that re-enters the scene each frame with a tiny transform: slight scale, slight rotation, slight offset, slight fade. p5’s createGraphics() gives you a separate buffer for this, image() lets you draw it back, and blendMode() gives you the compositing vocabulary. p5 explicitly documents offscreen graphics buffers as useful for performance and organization. (p5.js (https://p5js.org/reference/p5/createGraphics/?utm_source=chatgpt.com))
+Use feedback gently:
+    •    tiny transforms, not dramatic ones
+    •    masked by activity so the whole screen doesn’t turn to mush
+    •    occasional reset/clamp/threshold so detail survives
+This is the cheapest way to get recursion, memory, and non-linear self-reference.
+One simple ingredient that helps almost everything
+Use noise as a secondary modulator, not the star. Procedural noise is widely used in graphics because it adds complex detail at low memory and authoring cost. So use it to warp coordinates, bend a flow field, modulate palette phase, or perturb thresholds. (Computer Science at UMD (https://www.cs.umd.edu/~zwicker/publications/SurveyProceduralNoise-CGF10.pdf?utm_source=chatgpt.com))
+That means:
+    •    a little domain warp on the feedback pass
+    •    a little noise in the sensor angles
+    •    a little noise in the hue field
+    •    a little noise in excitation threshold
+Not “look, Perlin noise,” but “small irregularity everywhere.”
+What I’d tell Asher to build first
+I’d start with this exact stack:
+    1    Low-res Physarum-style trail field
+    2    Mild curl-noise bias on agent motion
+    3    One persistent feedback buffer with tiny scale/rotation/offset and decay
+    4    Separate gesture layer for click-drag ribbons/halos
+    5    OKLab/HSLuv-driven palette drift with analogous base colors and complementary flashes on high-energy events
+Why this stack:
+    •    simple local rules
+    •    strong emergent behavior
+    •    easy mouse mapping
+    •    rich feedback behavior
+    •    cheap enough for a browser toy beside Tone.js
+And I’d design every drag event to do two things at once:
+    •    perturb the background organism
+    •    leave a visible transient mark
+That is what will make the toy feel unified with the audio instead of “music plus wallpaper.”
+Best references for Asher
+    •    Jeff Jones on Physarum-inspired particle systems and emergent pattern formation. (PubMed (https://pubmed.ncbi.nlm.nih.gov/20067403/?utm_source=chatgpt.com))
+    •    Bridson, Hourihan, and Nordenstam, Curl-Noise for Procedural Fluid Flow. (Computer Science at UBC (https://www.cs.ubc.ca/~rbridson/docs/bridson-siggraph2007-curlnoise.pdf?utm_source=chatgpt.com))
+    •    Pearson, Complex Patterns in a Simple System for Gray–Scott reaction-diffusion. (Science (https://www.science.org/doi/10.1126/science.261.5118.189?utm_source=chatgpt.com))
+    •    Scholarpedia on reaction-diffusion and excitable media, plus Greenberg–Hastings/cyclic CA references. (Scholarpedia (https://www.scholarpedia.org/article/Reaction-diffusion_systems?utm_source=chatgpt.com))
+    •    p5 docs for offscreen buffers and blend/compositing. (p5.js (https://p5js.org/reference/p5/createGraphics/?utm_source=chatgpt.com))
+    •    Oklab and HSLuv for palette control. (Bottosson (https://bottosson.github.io/posts/oklab/?utm_source=chatgpt.com))
+The one sentence version: build a living low-res field, let simple agents or waves inhabit it, let feedback give it memory, and let color behave like a second organism.
