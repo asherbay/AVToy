@@ -5,6 +5,16 @@ export function createEngine() {
     function randomItem(arr) {
         return arr[Math.floor(Math.random() * arr.length)];
     }
+
+    function randomInRange(min, max) {
+        return Math.random() * (max - min) + min;
+    }
+
+    const perfStats = {
+        audioCallbackLagMs: 0,
+        audioCallbackPeakMs: 0,
+    };
+
     function trill({
         // pitch / trill
         pitch = "C4",
@@ -39,6 +49,13 @@ export function createEngine() {
         modIndexMin = 0.0,
         modIndexMax = 5.0,
         modIndexRate = 0.2,
+        morphTarget = [1, 0.7, 0.35, 0.18, 0.08, 0.04, 0.02, 0.01],
+
+        // metal texture
+        metalHarmonicity = randomInRange(2.4, 4.2),
+        metalModulationIndex = randomInRange(7, 16),
+        metalResonance = randomInRange(4200, 7600),
+        metalOctaves = randomInRange(2.2, 4.1),
 
         
         } = {}) {
@@ -88,8 +105,8 @@ export function createEngine() {
 
 
         // FB delay loop for extra texture
-        const fbDelay = new Tone.Delay(0.2);
-        const fbGain = new Tone.Gain(0.35);
+        const fbDelay = new Tone.Delay(0.175);
+        const fbGain = new Tone.Gain(0.3);
         const fbFilter = new Tone.Filter(1000, "lowpass");
         const drive = new Tone.Distortion(0.2);
 
@@ -125,56 +142,59 @@ export function createEngine() {
 
         detuneOsc.partials = [1, 0, 0., 0.0]; // harmonic amplitudes
 
-        function randomPartials(count = 8) {
-            const partials = [];
-
-            for (let i = 0; i < count; i++) {
-                partials.push(Math.random());
-            }
-
-            return partials;
-        }
-
         const fromPartials = [1,0,0,0,0,0,0,0];
-        let toPartials = randomPartials(8);
+        let toPartials = morphTarget.slice();
+        const primaryPitchHz = Tone.Frequency(pitch).toFrequency();
+        const secondaryPitchHz = Tone.Frequency(secondaryPitch).toFrequency();
+        let currentPitchTarget = primaryPitchHz;
+        let slideUntilTime = 0;
 
         function setMorphTarget(partials) {
             toPartials = partials.slice();
         }
 
         function setMorphAmount(t) {
-            const out = fromPartials.map((a, i) => a + (toPartials[i] - a) * t);
+            const amt = Math.pow(Math.min(Math.max(t, 0), 1), 0.6);
+            const out = fromPartials.map((a, i) => a + (toPartials[i] - a) * amt);
             osc.partials = out;
         }
        
-        // const metal = new Tone.MetalSynth({
-        //     frequency: 200,
-        //     envelope: { attack: 0.001, decay: 10.4, release: 0.1 },
-        //     harmonicity: 3.1,
-        //     modulationIndex: 32,
-        //     resonance: 6000,
-        //     octaves: 2
-        // });
+        const metal = new Tone.MetalSynth({
+            frequency: 200,
+            envelope: { attack: 0.08, decay: 1.6, release: 0.5 },
+            harmonicity: metalHarmonicity,
+            modulationIndex: metalModulationIndex,
+            resonance: metalResonance,
+            octaves: metalOctaves
+        });
 
-        // const comb = new Tone.FeedbackCombFilter({ delayTime: 0.012, resonance: 0.6 });
-        // const verb = new Tone.Reverb({ decay: 8, wet: 0.5 });
-        // const out = new Tone.Gain(0.1).toDestination();
+        const comb = new Tone.FeedbackCombFilter({ delayTime: 0.029, resonance: 0.8 });
+        const verb = new Tone.Reverb({ decay: 15, wet: 1.0 });
+        const out = new Tone.Gain(2.5)
 
-        // const metalLfo = new Tone.LFO({ 
-        //     frequency: 0.2,
-        //     min: 150,
-        //     max: 400,
-        // });
+        const metalLfo = new Tone.LFO({ 
+            frequency: 0.2,
+            min: 10,
+            max: 40,
+        });
 
-        // metalLfo.connect(metal.frequency);
+        metalLfo.connect(metal.frequency);
 
-        // metal.connect(comb);
-        // comb.connect(verb);
-        // verb.connect(out);
+        metal.connect(comb);
+        comb.connect(verb);
+        verb.connect(out);
+        out.connect(filter)
 
+
+        const metalLoop = new Tone.Loop((time) => {
+            metal.triggerAttackRelease("C0", 0.4, time);
+        }, 0.9);
 
         /* ================= GAIN ================= */
 
+        const oscGain = new Tone.Gain(1.0);
+        const oscMorphTap = new Tone.Gain(0.2);
+        const detuneGain = new Tone.Gain(0.3);
         const gain = new Tone.Gain(gainLevel);
         const gainLfo = new Tone.LFO(gainLfoRate, 0., gainMax);
         gainLfo.connect(gain.gain);
@@ -215,8 +235,12 @@ export function createEngine() {
 
         /* ================= ROUTING ================= */
 
-        osc.connect(vib);
-        detuneOsc.connect(vib);
+        osc.connect(oscGain);
+        detuneOsc.connect(detuneGain);
+        oscGain.connect(oscMorphTap);
+        oscMorphTap.connect(duckGain);
+        oscGain.connect(vib);
+        detuneGain.connect(vib);
         vib.connect(filter);
         filter.connect(duckGain);
         duckGain.connect(delay);
@@ -242,6 +266,9 @@ export function createEngine() {
             filter,
             delay,
             reverb,
+            oscGain,
+            oscMorphTap,
+            detuneGain,
             gain,
             gainLfo,
             trillLfo,
@@ -254,17 +281,18 @@ export function createEngine() {
             drive,
             limiter,
             duckGain,
-            // metal,
-            // comb,
-            // verb,
-            // out,
-            // metalLfo,
+            metal,
+            comb,
+            verb,
+            out,
+            metalLoop,
+            metalLfo,
             vib,
             vibLfo,
     
-            // triggerMetal() {
-            //     metal.triggerAttackRelease("C0", 10);
-            // },
+            triggerMetal() {
+                metal.triggerAttackRelease("C0", 10);
+            },
 
             setMorphTarget,
             setMorphAmount,   
@@ -273,21 +301,32 @@ export function createEngine() {
             getPrimaryPitch() {
                 // console.log("primary pitch:", pitch);
                 //return pitch;
-                return Tone.Frequency(pitch).toFrequency();
+                return primaryPitchHz;
             },
 
             getSecondaryPitch() {
                 // console.log("secondary pitch:", secondaryPitch);
                 //return secondaryPitch;
-                return Tone.Frequency(secondaryPitch).toFrequency();
+                return secondaryPitchHz;
+            },
+
+            isAtPrimaryPitch() {
+                return currentPitchTarget === primaryPitchHz;
+            },
+
+            isSliding() {
+                return Tone.now() < slideUntilTime;
             },
 
 
-            slideToPitch(pitchTarget, time = 1) {
-                console.log("attempting pitch slide");
-                osc.frequency.exponentialRampToValueAtTime(pitchTarget, `+1.5`, time);
-                detuneOsc.frequency.exponentialRampToValueAtTime(pitchTarget, `+2.5`, time);
-               // console.log(`Sliding to ${pitchTarget} over ${time} seconds`);
+            slideToPitch(pitchTarget, duration = 1) {
+                const rampDuration = Math.max(duration, 0.05);
+
+                osc.frequency.rampTo(pitchTarget, rampDuration);
+                detuneOsc.frequency.rampTo(pitchTarget, rampDuration + 0.3);
+
+                currentPitchTarget = pitchTarget;
+                slideUntilTime = Tone.now() + rampDuration;
             },
             
             startTransport() {
@@ -306,8 +345,9 @@ export function createEngine() {
                 filterLfo.start();
                 loop.start();
                
-                // metalLfo.start();
+                metalLfo.start();
                 vibLfo.start();
+                metalLoop.start();
                 //pitchSlideLoop.start();
             },
 
@@ -320,16 +360,21 @@ export function createEngine() {
                 filterLfo.stop();
                 gainLfo.stop();
                 Tone.Transport.stop();
-                // metalLfo.stop();
+                metalLfo.stop();
                 vibLfo.stop();
+                metalLoop.stop();   
                 //pitchSlideLoop.stop();
             },
 
             dispose() {
                 osc.dispose();
+                detuneOsc.dispose();
                 filter.dispose();
                 delay.dispose();
                 reverb.dispose();
+                oscGain.dispose();
+                oscMorphTap.dispose();
+                detuneGain.dispose();
                 gain.dispose();
                 gainLfo.dispose();
                 trillLfo.dispose();
@@ -342,11 +387,12 @@ export function createEngine() {
                 fbGain.dispose();
                 fbFilter.dispose();
                 drive.dispose();
-                // metal.dispose();
-                // comb.dispose();
-                // verb.dispose(); 
-                // out.dispose();
-                // metalLfo.dispose();
+                metal.dispose();
+                comb.dispose();
+                verb.dispose(); 
+                out.dispose();
+                metalLfo.dispose();
+                metalLoop.dispose();
                 vib.dispose();
                 vibLfo.dispose();
             },
@@ -365,9 +411,10 @@ export function createEngine() {
         modIndexMin: 0.0,
         modIndexMax: 0.5,
         harmonicity: 1.0,
-        reverbWet: 0.5,
+        reverbWet: 0.2,
         gainLfoRate: 0.4,
         gainMax: 0.5,
+        morphTarget: [0.1, 1.0, 0.7, 0.35, 0.18, 0.09, 0.04, 0.02],
     });
   
 
@@ -381,10 +428,11 @@ export function createEngine() {
         filterMax: 1000,
         filterModRate: 0.3,
         modIndexMin: 0.0,
-        modIndexMax: 0.5,
+        modIndexMax: 1.5,
         harmonicity: 0.5,
         gainLfoRate: 0.24,
         gainMax: 0.5,
+        morphTarget: [0.05, 0.2, 1.0, 0.65, 0.32, 0.14, 0.06, 0.03],
     });
 
 
@@ -392,30 +440,36 @@ export function createEngine() {
     const voice3 = trill({
         pitch: "F4",
         secondaryPitch: "G4",
-        pitchRange: 0,
-        rateMin: 1,
-        rateMax: 7,
-        filterMin: 400,
-        filterMax: 1200,
+        pitchRange: 200,
+        rateMin: 0.5,
+        rateMax: 2,
+        filterMin: 800,
+        filterMax: 1900,
         filterModRate: 0.15,
         modIndexMin: 0.0,
         modIndexMax: 0.7,
         harmonicity: 4.,
-        reverbWet: 0.4,
+        reverbWet: 0.,
         gainLfoRate: 0.22,
         gainMax: 0.1,
+        morphTarget: [0.04, 0.16, 0.28, 1.0, 0.6, 0.24, 0.1, 0.04],
     });
 
     const start = () => {
+        pitchSlideLoop.cancel(0);
+        duckLoop.cancel(0);
+        perfLoop.cancel(0);
+        pitchSlideLoop.start(0);
+        duckLoop.start(0);
+        perfLoop.start(0);
         Tone.Transport.start();
-        pitchSlideLoop.start();
-        duckLoop.start();
     }
 
     const stop = () => {
-        Tone.Transport.stop();
         pitchSlideLoop.stop();
         duckLoop.stop();
+        perfLoop.stop();
+        Tone.Transport.stop();
     }
 
     const voices = [voice1, voice2, voice3];
@@ -427,20 +481,11 @@ export function createEngine() {
         if (Math.random() < slideProbability) {
             
             const v = randomItem(voices);
-            let primaryPitch = v.getPrimaryPitch();
-            let secondaryPitch = v.getSecondaryPitch();
-            let targetPitch;
-            // console.log("frequency: ", v.osc.frequency.value, "primary: ", primaryPitch);
-
-            if (v.osc.frequency.value == primaryPitch) {
-            // console.log("voice at primary pitch");
-                targetPitch = secondaryPitch;
-            } else {
-            // console.log("voice not at primary pitch");
-                targetPitch = primaryPitch;
-            }
-            if (v) {
-                v.slideToPitch?.(targetPitch, Math.random() * 2.5 + 1.5);
+            if (v && !v.isSliding?.()) {
+                const targetPitch = v.isAtPrimaryPitch?.()
+                    ? v.getSecondaryPitch()
+                    : v.getPrimaryPitch();
+                v.slideToPitch?.(targetPitch, Math.random() * 2.5 + 0.75);
             }
         }
         }, slideCheckInterval);
@@ -479,10 +524,24 @@ export function createEngine() {
         }
         }, duckCheckInterval);
 
+    const perfLoop = new Tone.Loop((time) => {
+        const currentTime = Tone.getContext().rawContext.currentTime;
+        const lagMs = Math.max(0, (currentTime - time) * 1000);
+
+        perfStats.audioCallbackLagMs = lagMs;
+        perfStats.audioCallbackPeakMs = Math.max(
+            perfStats.audioCallbackPeakMs * 0.96,
+            lagMs
+        );
+    }, 0.25);
+
     const audioEngine = {
         voices,
         start,
         stop,
+        getPerfStats() {
+            return { ...perfStats };
+        },
     }
 
   return audioEngine;

@@ -1,16 +1,34 @@
-# React + Vite
+# AVToy
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Interactive audio toy built with React, Tone.js, and p5.
 
-Currently, two official plugins are available:
+It generates three evolving drone voices with:
+- intermittent pitch slides
+- occasional voice ducking
+- a retriggered metal texture layer
+- mouse-driven spatial/timbre modulation
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Run
 
-## React Compiler
+Requires Node 20+.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+npm install
+npm run dev
+```
 
-## Expanding the ESLint configuration
+## Use
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- Click `Start` to unlock audio.
+- Move the mouse to modulate the sound.
+- Vertical position affects reverb wetness.
+- The `Partials` slider is mainly a direct test/control for oscillator morphing.
+
+## Notes
+
+- Audio behavior is defined primarily in [`src/audioEngine.js`](/Users/eshbay/code/AVToy/src/audioEngine.js).
+- Visual/input behavior is defined in [`src/sketch.js`](/Users/eshbay/code/AVToy/src/sketch.js) and [`src/App.jsx`](/Users/eshbay/code/AVToy/src/App.jsx).
+
+## TODO
+
+- Mouse-movement-driven partial morphing is not working yet.

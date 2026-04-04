@@ -5,6 +5,19 @@
   text-align: center;
 }
 
+.perf-panel {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(120px, auto));
+  gap: 0.35rem 0.9rem;
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid #2f2f2f;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.85rem;
+  text-align: left;
+}
+
 .logo {
   height: 6em;
   padding: 1.5em;
