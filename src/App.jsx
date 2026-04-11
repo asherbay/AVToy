@@ -8,35 +8,8 @@ function linMap(x, min, max) {
   return min + x * (max - min);
 }
 
-function clamp(x, min = 0, max = 1) {
-  return Math.min(max, Math.max(min, x));
-}
-
 function lerp(a, b, t) {
   return a + (b - a) * t;
-}
-
-function selectorToVoiceWeights(selector) {
-  const x = clamp(selector);
-  return [
-    clamp(1 - x * 2),
-    clamp(1 - Math.abs(x - 0.5) * 2),
-    clamp(x * 2 - 1),
-  ];
-}
-
-function driftingSelector(timeSeconds) {
-  const primary = 0.5 + 0.35 * Math.sin(timeSeconds * 0.11);
-  const secondary = 0.15 * Math.sin(timeSeconds * 0.043 + 1.7);
-  return clamp(primary + secondary);
-}
-
-function speedToMorph(speed) {
-  return clamp(speed > 0.01 ? 1 : speed * 20);
-}
-
-function randomItem(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
 }
 
 function formatPerfValue(value, digits = 1) {
@@ -58,15 +31,12 @@ function App() {
     baseLatencyMs: 0,
     outputLatencyMs: 0,
   });
-  const partialsAmtRef = useRef(0.0);
-  const morphAmountsRef = useRef([0, 0, 0]);
-  const morphEnergyRef = useRef(0.0);
-  const activeMorphWeightsRef = useRef([0, 0, 0]);
   const frameCountRef = useRef(0);
   const lastPerfSampleTimeRef = useRef(performance.now());
   const controlAvgMsRef = useRef(0);
   const controlPeakMsRef = useRef(0);
   const longTaskCountRef = useRef(0);
+  const hasLoggedMovementControlRef = useRef(false);
 
   const p5ContainerRef = useRef(null);
 
@@ -79,12 +49,12 @@ function App() {
       const eng = engineRef.current;
       if (eng) {
         try {
-          eng.stop?.();
-        } catch (err) {
-          console.error("Failed to stop audio engine", err);
-        }
-        try {
-          eng.voices.forEach((v) => v.dispose?.());
+          if (eng.dispose) {
+            eng.dispose();
+          } else {
+            eng.stop?.();
+            eng.voices.forEach((v) => v.dispose?.());
+          }
         } catch (err) {
           console.error("Failed to dispose audio engine", err);
         }
@@ -153,6 +123,16 @@ function App() {
       const controlStart = performance.now();
       frameCountRef.current += 1;
 
+      if (!hasLoggedMovementControlRef.current && ctl.rawSpeed > 0) {
+        hasLoggedMovementControlRef.current = true;
+        console.log("movement control", {
+          source: ctl.source,
+          rawSpeed: ctl.rawSpeed,
+          speedPxPerSecond: ctl.speedPxPerSecond,
+          speed: ctl.speed,
+        });
+      }
+
       // ctl.x, ctl.y, ctl.speed, ctl.mouseDown
       // hook these into your Tone engine here
       // e.g. engineRef.current?.forEach(v => v.setSomething(ctl.x))
@@ -167,33 +147,7 @@ function App() {
         v.reverb.wet.rampTo(wet, 0.05);
       });
 
-      const selector = driftingSelector(performance.now() * 0.001);
-      const speedInput = speedToMorph(ctl.speed);
-      const currentEnergy = morphEnergyRef.current;
-
-      if (speedInput > 0.5) {
-        activeMorphWeightsRef.current = selectorToVoiceWeights(selector);
-        morphEnergyRef.current = 1;
-      } else {
-        morphEnergyRef.current = currentEnergy * 0.992;
-      }
-
-      const speedMorph = morphEnergyRef.current;
-      const activeWeights = activeMorphWeightsRef.current;
-
-      engineRef.current?.voices.forEach((v, index) => {
-        const targetMorph = clamp(
-          partialsAmtRef.current + speedMorph * activeWeights[index]
-        );
-        const nextMorph = lerp(
-          morphAmountsRef.current[index],
-          targetMorph,
-          0.12
-        );
-
-        morphAmountsRef.current[index] = nextMorph;
-        v.setMorphAmount(nextMorph);
-      });
+      engineRef.current?.triggerArpGesture?.(ctl);
 
       const controlDuration = performance.now() - controlStart;
       controlAvgMsRef.current = lerp(
@@ -222,7 +176,15 @@ function App() {
         // if (clickData.x >= 0. && clickData.x <= 1.0 && clickData.y >= 0. && clickData.y <= 1.0 ) {
         //   v.slideToPitch(targetPitch, Math.random() * 2.5 + 1.5);
         // }
-        console.log("click!", clickData);
+        const notes = engineRef.current?.playArpRun?.({
+          numNotes: 8,
+          pitchRange: [60, 88],
+          repeatPitches: false,
+          noteDuration: 0.16,
+          noteSpacing: 0.08,
+          velocity: 0.72,
+        });
+        console.log("click!", clickData, "arp notes", notes);
       }
   );
 
@@ -234,8 +196,6 @@ function App() {
   const handleSlider = (e) => {
     const t = Number(e.target.value);
     setpartialsAmt(t);
-    partialsAmtRef.current = t;
-    morphAmountsRef.current = morphAmountsRef.current.map(() => t);
     engineRef.current?.voices.forEach((v) => v.setMorphAmount(t));
   };
 
@@ -243,10 +203,6 @@ function App() {
     if (started) return;
 
     await Tone.start();
-    partialsAmtRef.current = partialsAmt;
-    morphAmountsRef.current = morphAmountsRef.current.map(() => partialsAmt);
-    morphEnergyRef.current = 0;
-    activeMorphWeightsRef.current = [0, 0, 0];
     engineRef.current?.voices.forEach((voice) =>
       voice.setMorphAmount(partialsAmt)
     );

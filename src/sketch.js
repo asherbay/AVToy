@@ -1,38 +1,90 @@
 import p5 from "p5";
 
 export function mountSketch(containerEl, onControl, onClick) {
-  return new p5((p) => {
+  let cleanupPointerMove = () => {};
+  const instance = new p5((p) => {
 
 
-    function randShape(numPoints, sHeight, sWidth) {
-      var s = [];
-      for (var i = 0; i < numPoints; i++) {
-        s.push([p.random(sWidth * 1), p.random(sHeight * 1)]);
-      }
-      return s;
-    }
-    function blob() {      
-      var shape = randShape(10, p.height, p.width);
-      p.noFill();
-      p.stroke(255);
-      p.beginShape();
-      for (var i = 0; i < shape.length; i++) {
-        var s = shape[i];
-        p.curveVertex(s[0], s[1]);
-      }
-      p.endShape(p.CLOSE);
-    }
+    
 
 
 
     let lastX = 0;
     let lastY = 0;
+    let lastSpeed = 0;
+    let lastControlTime = 0;
+
+    let canvasEl = null;
+
+    function sendControl(dx, dy, source = "draw", x = p.mouseX, y = p.mouseY) {
+      if (!onControl) {
+        return;
+      }
+
+      const now = performance.now();
+      const speed = Math.sqrt(dx * dx + dy * dy);
+      const dt = Math.max((now - lastControlTime) / 1000, 1 / 120);
+      const speedPxPerSecond = speed / dt;
+      const speedNorm = Math.min(speedPxPerSecond / 3200, 1);
+      const accel = speedNorm - lastSpeed;
+
+      onControl({
+        x: x / p.width,       // 0..1
+        y: y / p.height,      // 0..1
+        speed: speedNorm, // roughly 0..1
+        rawSpeed: speed,
+        speedPxPerSecond,
+        accel,
+        dt,
+        dx,
+        dy,
+        mouseDown: p.mouseIsPressed,
+        source,
+      });
+
+      lastSpeed = speedNorm;
+      lastControlTime = now;
+    }
+
+    function handlePointerMove(event) {
+      if (!canvasEl) {
+        return;
+      }
+
+      const rect = canvasEl.getBoundingClientRect();
+      const scaleX = p.width / rect.width;
+      const scaleY = p.height / rect.height;
+      const x = (event.clientX - rect.left) * scaleX;
+      const y = (event.clientY - rect.top) * scaleY;
+
+      if (x < 0 || x > p.width || y < 0 || y > p.height) {
+        return;
+      }
+
+      const dx = Number.isFinite(event.movementX)
+        ? event.movementX * scaleX
+        : x - lastX;
+      const dy = Number.isFinite(event.movementY)
+        ? event.movementY * scaleY
+        : y - lastY;
+
+      sendControl(dx, dy, "pointermove", x, y);
+      lastX = x;
+      lastY = y;
+    }
 
     p.setup = () => {
-      p.createCanvas(800, 500);
+      const canvas = p.createCanvas(800, 500);
+      canvasEl = canvas.elt;
+      window.addEventListener("pointermove", handlePointerMove);
+      cleanupPointerMove = () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+      };
       p.background(0);
       lastX = p.mouseX;
       lastY = p.mouseY;
+      lastSpeed = 0;
+      lastControlTime = performance.now();
     };
 
     p.draw = () => {
@@ -43,21 +95,13 @@ export function mountSketch(containerEl, onControl, onClick) {
       // mouse velocity
       const dx = p.mouseX - lastX;
       const dy = p.mouseY - lastY;
-      const speed = Math.sqrt(dx * dx + dy * dy);
 
       // simple visual
       p.stroke(255);
       p.point(p.mouseX, p.mouseY);
 
       // send controls to audio
-      if (onControl) {
-        onControl({
-          x: p.mouseX / p.width,       // 0..1
-          y: p.mouseY / p.height,      // 0..1
-          speed: Math.min(speed / 50, 1), // roughly 0..1
-          mouseDown: p.mouseIsPressed,
-        });
-      }
+      sendControl(dx, dy);
 
       lastX = p.mouseX;
       lastY = p.mouseY;
@@ -75,4 +119,12 @@ export function mountSketch(containerEl, onControl, onClick) {
       }
     };
   }, containerEl);
+
+  const remove = instance.remove.bind(instance);
+  instance.remove = () => {
+    cleanupPointerMove();
+    remove();
+  };
+
+  return instance;
 }

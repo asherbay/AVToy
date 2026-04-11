@@ -10,18 +10,26 @@ export function createEngine() {
         return Math.random() * (max - min) + min;
     }
 
+    function clamp(value, min, max) {
+        return Math.min(max, Math.max(min, value));
+    }
+
+    function midiToNote(midi) {
+        return Tone.Frequency(midi, "midi").toNote();
+    }
+
     const perfStats = {
         audioCallbackLagMs: 0,
         audioCallbackPeakMs: 0,
     };
 
-    function trill({
-        // pitch / trill
+    function drone({
+        // pitch / drone
         pitch = "C4",
         pitchRange = 200,
         secondaryPitch = "G4",
 
-        // trill rate modulation
+        // pitch rate modulation
         rateMin = 2,
         rateMax = 8,
         rateModRate = 0.25,
@@ -202,24 +210,24 @@ export function createEngine() {
         const limiter = new Tone.Limiter(-6);
         
 
-        /* ================= TRILL ================= */
+        /* ================= PITCH ================= */
 
-        const trillLfo = new Tone.LFO({
+        const pitchLfo = new Tone.LFO({
             frequency: 3,
             type: "square",
             min: pitchRange,
             max: 0,
         });
 
-        const trillModLfo = new Tone.LFO({
+        const pitchRateLfo = new Tone.LFO({
             frequency: rateModRate,
             type: "sine",
             min: rateMin,
             max: rateMax,
         });
 
-        trillLfo.connect(osc.detune);
-        trillModLfo.connect(trillLfo.frequency);
+        pitchLfo.connect(osc.detune);
+        pitchRateLfo.connect(pitchLfo.frequency);
 
         /* ================= MOD INDEX “LFO” ================= */
 
@@ -271,8 +279,8 @@ export function createEngine() {
             detuneGain,
             gain,
             gainLfo,
-            trillLfo,
-            trillModLfo,
+            pitchLfo,
+            pitchRateLfo,
             filterLfo,
             loop,
             fbDelay,
@@ -340,8 +348,8 @@ export function createEngine() {
                 detuneOsc.start();
                 
                 gainLfo.start();
-                trillLfo.start();
-                trillModLfo.start();
+                pitchLfo.start();
+                pitchRateLfo.start();
                 filterLfo.start();
                 loop.start();
                
@@ -355,8 +363,8 @@ export function createEngine() {
                 osc.stop();
                 detuneOsc.stop();
                 loop.stop();
-                trillLfo.stop();
-                trillModLfo.stop();
+                pitchLfo.stop();
+                pitchRateLfo.stop();
                 filterLfo.stop();
                 gainLfo.stop();
                 Tone.Transport.stop();
@@ -377,8 +385,8 @@ export function createEngine() {
                 detuneGain.dispose();
                 gain.dispose();
                 gainLfo.dispose();
-                trillLfo.dispose();
-                trillModLfo.dispose();
+                pitchLfo.dispose();
+                pitchRateLfo.dispose();
                 filterLfo.dispose();
                 loop.dispose();
                 limiter.dispose();
@@ -399,7 +407,147 @@ export function createEngine() {
         };
 
     }
-    const voice1 = trill({
+
+
+    function arp({
+        maxPolyphony = 8,
+        harmonicity = 9.0,
+        ampAttack = 0.1,
+        ampDecay = 0.2,
+        ampSustain = 0.0,
+        ampRelease = 0.9,
+        modAttack = 0.02,
+        modDecay = 0.18,
+        modSustain = 0.0,
+        modRelease = 0.2,
+        filterQ = 1.4,
+        filterLFOMin = 1800,
+        filterLFOMax = 3200,
+        filterLFORate = 0.52,
+        modIndexLFOMin = 0.,
+        modIndexLFOMax = 9.0,
+        modIndexLFORate = 0.56,
+        delayTime = 0.18,
+        delayFeedback = 0.4,
+        delayMix = 0.3,
+        combDelayTime = 0.039,
+        combResonance = 0.3,
+        synthGainLevel = 0.56,
+        limiterThreshold = -6,
+    } = {}) {
+
+        const synth = new Tone.PolySynth(Tone.FMSynth, {
+            harmonicity,
+            modulationIndex: modIndexLFOMin,
+            oscillator: {
+                type: "sine",
+            },
+            modulation: {
+                type: "triangle",
+            },
+            envelope: {
+                attack: ampAttack,
+                decay: ampDecay,
+                sustain: ampSustain,
+                release: ampRelease,
+            },
+            modulationEnvelope: {
+                attack: modAttack,
+                decay: modDecay,
+                sustain: modSustain,
+                release: modRelease,
+            },
+        });
+        synth.maxPolyphony = maxPolyphony;
+
+        const synthGain = new Tone.Gain(synthGainLevel);
+        const filter = new Tone.Filter({
+            frequency: (filterLFOMin + filterLFOMax) * 0.5,
+            type: "bandpass",
+            Q: filterQ,
+        });
+        const comb = new Tone.FeedbackCombFilter({
+            delayTime: combDelayTime,
+            resonance: combResonance,
+        });
+        const delay = new Tone.FeedbackDelay(delayTime, delayFeedback);
+        delay.wet.value = delayMix;
+        const limiter = new Tone.Limiter(limiterThreshold);
+
+        const filterLfo = new Tone.LFO({
+            frequency: filterLFORate,
+            type: "sine",
+            min: filterLFOMin,
+            max: filterLFOMax,
+        });
+        filterLfo.connect(filter.frequency);
+
+        const modIndexLoop = new Tone.Loop((time) => {
+            const phase = 2 * Math.PI * modIndexLFORate * time;
+            const x = (Math.sin(phase) + 1) * 0.5;
+            const value = modIndexLFOMin + x * (modIndexLFOMax - modIndexLFOMin);
+            synth.set({ modulationIndex: value });
+        }, 1 / 30);
+
+        synth.connect(synthGain);
+        synthGain.connect(filter);
+        filter.connect(comb);
+        comb.connect(delay);
+        delay.connect(limiter);
+        limiter.toDestination();
+
+        return {
+            synth,
+            synthGain,
+            filter,
+            comb,
+            delay,
+            limiter,
+            filterLfo,
+            modIndexLoop,
+
+            playRun(notes, {
+                noteDuration = 0.36,
+                noteSpacing = 0.03,
+                velocity = 0.7,
+                startTime = Tone.now() + 0.01,
+            } = {}) {
+                notes.forEach((note, index) => {
+                    synth.triggerAttackRelease(
+                        note,
+                        clamp(noteDuration + (Math.random() * 2.0 - 1.0), 0.05, 4.0),
+                        startTime + index * noteSpacing,
+                        velocity
+                    );
+                });
+            },
+
+            start() {
+                filterLfo.start();
+                modIndexLoop.start();
+            },
+
+            stop() {
+                filterLfo.stop();
+                modIndexLoop.stop();
+                synth.releaseAll();
+            },
+
+            dispose() {
+                synth.dispose();
+                synthGain.dispose();
+                filter.dispose();
+                comb.dispose();
+                delay.dispose();
+                limiter.dispose();
+                filterLfo.dispose();
+                modIndexLoop.dispose();
+            },
+        };
+
+    }
+
+    const voice1 = drone({
         pitch: "D4",
         secondaryPitch: "C4",
         pitchRange: 0,
@@ -418,7 +566,7 @@ export function createEngine() {
     });
   
 
-    const voice2 = trill({
+    const voice2 = drone({
         pitch: "C3",
         secondaryPitch: "Bb2",
         pitchRange: 0,
@@ -437,10 +585,10 @@ export function createEngine() {
 
 
 
-    const voice3 = trill({
+    const voice3 = drone({
         pitch: "F4",
         secondaryPitch: "G4",
-        pitchRange: 200,
+        pitchRange: 0,
         rateMin: 0.5,
         rateMax: 2,
         filterMin: 800,
@@ -455,21 +603,246 @@ export function createEngine() {
         morphTarget: [0.04, 0.16, 0.28, 1.0, 0.6, 0.24, 0.1, 0.04],
     });
 
+    const arpVoice = arp();
+
+    function getNearestStableDronePitch(voice) {
+        const primaryPitch = voice.getPrimaryPitch();
+        const secondaryPitch = voice.getSecondaryPitch();
+        const currentPitch = Number(voice.osc.frequency.value);
+
+        if (!Number.isFinite(currentPitch)) {
+            return primaryPitch;
+        }
+
+        return Math.abs(currentPitch - primaryPitch) <=
+            Math.abs(currentPitch - secondaryPitch)
+            ? primaryPitch
+            : secondaryPitch;
+    }
+
+    function makePitchSequence(
+        numNotes = 8,
+        pitchRange = [60, 84],
+        repeatPitches = false
+    ) {
+        const minPitch = Math.round(clamp(pitchRange[0] ?? 60, 0, 127));
+        const maxPitch = Math.round(clamp(pitchRange[1] ?? 84, minPitch, 127));
+        const dronePitchClasses = voices.map((voice) => {
+            const midi = Tone.Frequency(getNearestStableDronePitch(voice)).toMidi();
+            return ((Math.round(midi) % 12) + 12) % 12;
+        });
+        const pitchClasses = [...new Set(dronePitchClasses)];
+        const candidates = [];
+
+        for (let midi = minPitch; midi <= maxPitch; midi += 1) {
+            if (pitchClasses.includes(midi % 12)) {
+                candidates.push(midi);
+            }
+        }
+
+        if (!candidates.length || numNotes <= 0) {
+            return [];
+        }
+
+        const sequence = [];
+
+        for (let i = 0; i < numNotes; i += 1) {
+            let possiblePitches = candidates;
+
+            if (!repeatPitches && sequence.length > 0 && candidates.length > 1) {
+                const previousPitch = sequence[sequence.length - 1];
+                possiblePitches = candidates.filter((midi) => midi !== previousPitch);
+            }
+
+            sequence.push(randomItem(possiblePitches));
+        }
+
+        return sequence.map(midiToNote);
+    }
+
+    function playArpRun({
+        numNotes = 8,
+        pitchRange = [60, 88],
+        repeatPitches = false,
+        noteDuration = 0.16,
+        noteSpacing = 0.08,
+        velocity = 0.72,
+    } = {}) {
+        const notes = makePitchSequence(numNotes, pitchRange, repeatPitches);
+
+        arpVoice.playRun(notes, {
+            noteDuration,
+            noteSpacing,
+            velocity,
+        });
+
+        return notes;
+    }
+
+    let isStarted = false;
+    let lastArpGestureTime = -Infinity;
+    let accumulatedGestureDistance = 0;
+    let accumulatedGestureY = 0;
+    let hasLoggedArpGestureInput = false;
+
+    function triggerArpGesture({
+        speed = 0,
+        rawSpeed = 0,
+        speedPxPerSecond = 0,
+        accel = 0,
+        dx = 0,
+        dy = 0,
+    } = {}) {
+        const contextIsRunning = Tone.getContext().rawContext.state === "running";
+
+        if (!isStarted && !contextIsRunning) {
+            return false;
+        }
+
+        const normalizedSpeed = Number.isFinite(speed) ? speed : 0;
+        const pixelsPerSecond = Number.isFinite(speedPxPerSecond)
+            ? speedPxPerSecond
+            : 0;
+        const movementAccel = Number.isFinite(accel) ? accel : 0;
+        const frameDistance = Number.isFinite(rawSpeed) && rawSpeed > 0
+            ? rawSpeed
+            : Math.sqrt(dx * dx + dy * dy);
+        const effectiveSpeed = clamp(
+            Math.max(normalizedSpeed, frameDistance / 72, pixelsPerSecond / 3200),
+            0,
+            1
+        );
+        const positiveAccel = Math.max(0, movementAccel);
+        const motionWeight = clamp((effectiveSpeed - 0.16) / 0.84, 0, 1);
+
+        if (!hasLoggedArpGestureInput && effectiveSpeed > 0.04) {
+            hasLoggedArpGestureInput = true;
+            console.log("arp gesture input", {
+                speed: effectiveSpeed.toFixed(2),
+                frameDistance: frameDistance.toFixed(1),
+                speedPxPerSecond: pixelsPerSecond.toFixed(0),
+                context: Tone.getContext().rawContext.state,
+            });
+        }
+
+        if (motionWeight > 0) {
+            accumulatedGestureDistance = Math.min(
+                accumulatedGestureDistance + frameDistance * motionWeight,
+                1200
+            );
+            accumulatedGestureY += dy * motionWeight;
+        } else {
+            accumulatedGestureDistance *= 0.8;
+            accumulatedGestureY *= 0.8;
+        }
+
+        const now = Tone.now();
+        const cooldown = clamp(0.6 - effectiveSpeed * 0.24, 0.28, 0.6);
+        const passesThreshold = effectiveSpeed > 0.34 || positiveAccel > 0.18;
+        const hasEnoughMotion = accumulatedGestureDistance > 56;
+
+        if (
+            !passesThreshold ||
+            !hasEnoughMotion ||
+            now - lastArpGestureTime < cooldown
+        ) {
+            return false;
+        }
+
+        const distanceAmount = clamp(accumulatedGestureDistance / 420, 0, 1);
+        const verticalBias = clamp(
+            -accumulatedGestureY / Math.max(accumulatedGestureDistance, 1),
+            -1,
+            1
+        );
+        const noteCount = clamp(
+            Math.round(
+                4 +
+                effectiveSpeed * 6 +
+                distanceAmount * 5 +
+                randomInRange(-1, 2)
+            ),
+            4,
+            15
+        );
+        const rangeSpread = 16 + Math.round(effectiveSpeed * 12 + distanceAmount * 8);
+        const rangeCenter = 74 + Math.round(verticalBias * 8 + randomInRange(-3, 4));
+        const minPitch = Math.round(clamp(rangeCenter - rangeSpread * 0.5, 52, 104));
+        const maxPitch = Math.round(clamp(rangeCenter + rangeSpread * 0.5, minPitch + 3, 108));
+        const noteSpacing = clamp(
+            0.15 -
+            effectiveSpeed * 0.085 -
+            distanceAmount * 0.025 +
+            randomInRange(-0.01, 0.015),
+            0.035,
+            0.16
+        );
+        const noteDuration = clamp(
+            0.12 + distanceAmount * 0.24 + randomInRange(-0.03, 0.12),
+            0.06,
+            0.55
+        );
+        const velocity = clamp(
+            0.48 +
+            effectiveSpeed * 0.32 +
+            distanceAmount * 0.12 +
+            positiveAccel * 0.16 +
+            randomInRange(-0.06, 0.08),
+            0.35,
+            0.95
+        );
+        const notes = playArpRun({
+            numNotes: noteCount,
+            pitchRange: [minPitch, maxPitch],
+            repeatPitches: false,
+            noteDuration,
+            noteSpacing,
+            velocity,
+        });
+
+        lastArpGestureTime = now;
+        accumulatedGestureDistance = 0;
+        accumulatedGestureY = 0;
+
+        console.log("gesture arp", {
+            notes,
+            speed: effectiveSpeed.toFixed(2),
+            numNotes: noteCount,
+            pitchRange: [minPitch, maxPitch],
+            noteSpacing: noteSpacing.toFixed(3),
+        });
+
+        return notes;
+    }
+
     const start = () => {
         pitchSlideLoop.cancel(0);
         duckLoop.cancel(0);
         perfLoop.cancel(0);
+        arpVoice.start();
         pitchSlideLoop.start(0);
         duckLoop.start(0);
         perfLoop.start(0);
         Tone.Transport.start();
+        isStarted = true;
     }
 
     const stop = () => {
         pitchSlideLoop.stop();
         duckLoop.stop();
         perfLoop.stop();
+        arpVoice.stop();
         Tone.Transport.stop();
+        isStarted = false;
+    }
+
+    const dispose = () => {
+        stop();
+        arpVoice.dispose();
+        voices.forEach((voice) => voice.dispose());
+        pitchSlideLoop.dispose();
+        duckLoop.dispose();
+        perfLoop.dispose();
     }
 
     const voices = [voice1, voice2, voice3];
@@ -537,8 +910,13 @@ export function createEngine() {
 
     const audioEngine = {
         voices,
+        arpVoice,
         start,
         stop,
+        dispose,
+        makePitchSequence,
+        playArpRun,
+        triggerArpGesture,
         getPerfStats() {
             return { ...perfStats };
         },
