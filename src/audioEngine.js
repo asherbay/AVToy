@@ -547,9 +547,245 @@ export function createEngine() {
 
     }
 
+    function lead({
+        pitch = "C4",
+        harmonicity = 1.0,
+        modulationIndex = 0.0,
+        filterFrequency = 4200,
+        filterQ = 1.0,
+        gainLevel = 0.12,
+        reverbDecay = 8,
+        reverbWet = 0.28,
+        fbDelayTime = 0.175,
+        fbGainLevel = 0.3,
+        fbFilterFrequency = 1000,
+        driveAmount = 0.2,
+    } = {}) {
+        const filter = new Tone.Filter({
+            frequency: filterFrequency,
+            type: "lowpass",
+            Q: filterQ,
+        });
+
+        const gain = new Tone.Gain(gainLevel);
+        const reverb = new Tone.Reverb({
+            decay: reverbDecay,
+            wet: reverbWet,
+        });
+
+        // FB delay loop for extra texture
+        const fbDelay = new Tone.Delay(fbDelayTime);
+        const fbGain = new Tone.Gain(fbGainLevel);
+        const fbFilter = new Tone.Filter(fbFilterFrequency, "lowpass");
+        const drive = new Tone.Distortion(driveAmount);
+
+        fbDelay.connect(fbFilter);
+        fbFilter.connect(drive);
+        drive.connect(fbGain);
+        fbGain.connect(fbDelay);
+
+        const osc = new Tone.FMOscillator({
+            frequency: pitch,
+            type: "sawtooth",
+            modulationType: "sine",
+            harmonicity,
+            modulationIndex,
+        });
+
+        const highOsc = new Tone.FMOscillator({
+            frequency: Tone.Frequency((Tone.Frequency(pitch).toMidi() + 12), "midi").toNote(),
+            type: "sawtooth",
+            modulationType: "sine",
+            harmonicity,
+            modulationIndex,
+        });
+
+        const highOscGain = new Tone.Gain(0.);
+
+        const vib = new Tone.Vibrato({
+            frequency: 2.5,
+            depth: 0.21,
+        });
+
+        const vibLfo = new Tone.LFO({
+            frequency: Math.random() + 0.1,
+            min: 3.,
+            max: 6.,
+        });
+        vibLfo.connect(vib.frequency);
+
+        osc.connect(vib);
+        highOsc.connect(highOscGain);
+        highOscGain.connect(filter);
+        vib.connect(filter);
+        filter.connect(gain);
+        gain.connect(reverb);
+       // gain.connect(reverb);
+        // fbDelay.connect(reverb);
+        reverb.toDestination();
+
+        let hasStarted = false;
+        let hasStopped = false;
+
+        function rampParam(param, value, rampTime = 0) {
+            if (rampTime > 0) {
+                param.rampTo(value, rampTime);
+            } else {
+                param.value = value;
+            }
+        }
+
+        return {
+            osc,
+            highOsc,
+            highOscGain,
+            vib,
+            vibLfo,
+            filter,
+            gain,
+            reverb,
+            fbDelay,
+            fbGain,
+            fbFilter,
+            drive,
+
+
+            setPitch(value, rampTime = 0) {
+                if (rampTime > 0) {
+                    osc.frequency.rampTo(value, rampTime);
+                    highOsc.frequency.rampTo(value * 2., rampTime);
+                } else {
+                    osc.frequency.value = Tone.Frequency(value).toFrequency();
+                    highOsc.frequency.value = Tone.Frequency(value).toFrequency() * 2;
+                }
+            },
+
+            setFilterFrequency(value, rampTime = 0) {
+                rampParam(filter.frequency, value, rampTime);
+            },
+
+            setFilterQ(value, rampTime = 0) {
+                rampParam(filter.Q, value, rampTime);
+            },
+
+            setGainLevel(value, rampTime = 0) {
+                rampParam(gain.gain, value, rampTime);
+            },
+
+            setModulationIndex(value, rampTime = 0) {
+                rampParam(osc.modulationIndex, value, rampTime);
+            },
+
+            setVibDepth(value, rampTime = 0) {
+                rampParam(vib.depth, value, rampTime);
+            },
+
+            setHighOscGain(value, rampTime = 0) {
+                rampParam(highOscGain.gain, value, rampTime);
+            },
+
+            setHarmonicity(value, rampTime = 0) {
+                rampParam(osc.harmonicity, value, rampTime);
+            },
+
+            setReverbWet(value, rampTime = 0) {
+                rampParam(reverb.wet, value, rampTime);
+            },
+
+            start(time = Tone.now()) {
+                if (hasStarted || hasStopped) {
+                    return;
+                }
+
+                osc.start(time);
+                highOsc.start(time);
+                vibLfo.start(time);
+                hasStarted = true;
+            },
+
+            stop(time = Tone.now()) {
+                if (!hasStarted || hasStopped) {
+                    return;
+                }
+                vibLfo.stop(time);
+                osc.stop(time);
+                highOsc.stop(time);
+                hasStopped = true;
+            },
+
+            dispose() {
+                osc.dispose();
+                filter.dispose();
+                gain.dispose();
+                reverb.dispose();
+                fbDelay.dispose();
+                fbGain.dispose();
+                fbFilter.dispose();
+                drive.dispose();
+                vib.dispose();
+                vibLfo.dispose();
+            },
+        };
+    }
+
+    function generateChordPair(){
+        let c1BassNote = Math.floor(randomInRange(41, 52))
+        let c1Note2 = c1BassNote + Math.floor(randomInRange(2, 10)) + Math.floor(randomInRange(0, 2)) * 12
+        let c1Note3  = c1BassNote + Math.floor(randomInRange(2, 10)) + Math.floor(randomInRange(0, 2)) * 12
+        while(c1Note3 === c1Note2){
+            c1Note3 = c1BassNote + Math.floor(randomInRange(2, 10))
+        }
+        // if(Math.random() < 0.3){
+        //     c1Note2 += 12
+        // }
+        // if(Math.random() < 0.3){
+        //     c1Note3 += 12
+        // }
+
+        let c2BassNote = c1BassNote + Math.floor(randomItem([-7, -5,-3, -2, 2, 3, 5, 7, 9, 12]))
+        let c2Note2 = c1Note2 + Math.floor(randomItem([-4, -3, -2, -1, 1, 2, 3, 4, 5, 12]))
+        let c2Note3 = c1Note3 + Math.floor(randomItem([-4, -3, -2, -1, 1, 2, 3, 4, 5, 12]))
+
+        let chord1 = [Tone.Frequency(c1BassNote, "midi").toNote(), Tone.Frequency(c1Note2, "midi").toNote(), Tone.Frequency(c1Note3, "midi").toNote()]
+        let chord2 = [Tone.Frequency(c2BassNote, "midi").toNote(), Tone.Frequency(c2Note2, "midi").toNote(), Tone.Frequency(c2Note3, "midi").toNote()]
+
+        let chordPair = [chord1, chord2]
+        console.log("generated chord pair:", chordPair);
+
+        return chordPair
+
+    }
+
+  // Original chords (voice1 voice2 voice3): [["C3", "D4", "F4"], ["Bb2", "C4", "G4"]];
+  // cool spooky chords: [['C3', 'D#3', 'G3'],['G3', 'B2', 'E3']]
+
+
+    const chordPair1 = [['C3', 'D#3', 'G3'],['G3', 'B2', 'E3']];
+
+
+
+    //bass
     const voice1 = drone({
-        pitch: "D4",
-        secondaryPitch: "C4",
+        pitch: chordPair1[0][0],
+        secondaryPitch: chordPair1[1][0],
+        pitchRange: 0,
+        rateMin: 0.25,
+        rateMax: 0.5,
+        filterMin: 200,
+        filterMax: 1000,
+        filterModRate: 0.3,
+        modIndexMin: 0.0,
+        modIndexMax: 1.5,
+        harmonicity: 0.5,
+        gainLfoRate: 0.24,
+        gainMax: 0.5,
+        morphTarget: [0.05, 0.2, 1.0, 0.65, 0.32, 0.14, 0.06, 0.03],
+    });
+
+
+    const voice2 = drone({
+        pitch: chordPair1[0][1],
+        secondaryPitch: chordPair1[1][1],
         pitchRange: 0,
         rateMin: 1,
         rateMax: 7,
@@ -566,28 +802,13 @@ export function createEngine() {
     });
   
 
-    const voice2 = drone({
-        pitch: "C3",
-        secondaryPitch: "Bb2",
-        pitchRange: 0,
-        rateMin: 0.25,
-        rateMax: 0.5,
-        filterMin: 200,
-        filterMax: 1000,
-        filterModRate: 0.3,
-        modIndexMin: 0.0,
-        modIndexMax: 1.5,
-        harmonicity: 0.5,
-        gainLfoRate: 0.24,
-        gainMax: 0.5,
-        morphTarget: [0.05, 0.2, 1.0, 0.65, 0.32, 0.14, 0.06, 0.03],
-    });
+
 
 
 
     const voice3 = drone({
-        pitch: "F4",
-        secondaryPitch: "G4",
+        pitch: chordPair1[0][2],
+        secondaryPitch: chordPair1[1][2],
         pitchRange: 0,
         rateMin: 0.5,
         rateMax: 2,
@@ -604,6 +825,172 @@ export function createEngine() {
     });
 
     const arpVoice = arp();
+    const leadVoice = lead({
+        pitch: Tone.Frequency(chordPair1[0][1]).transpose(12).toNote(),
+        gainLevel: 0.0,
+        filterFrequency: 900,
+        reverbWet: 0.44,
+        reverbDecay: 10,
+    });
+    const leadGestureState = {
+        isDown: false,
+        holdStartTime: 0,
+        dragDistance: 0,
+        dragEnergy: 0,
+        lastUpdateTime: Tone.now(),
+    };
+    const leadGestureConfig = {
+        pressGain: 0.12,
+        holdGainBoost: 0.08,
+        gainAttack: 0.02,
+        gainRelease: 0.18,
+        filterPressHigh: 7200,
+        filterPressLow: 100,
+        filterRiseMax: 5200,
+        filterDropTime: 0.1,
+        filterRampTime: 0.08,
+        holdRiseSeconds: 12.0,
+        dragDistanceMax: 1500,
+        dragEnergyDecayPerSecond: 3.4,
+        modIndexBase: 0.08,
+        modIndexRange: 18,
+        modIndexRampTime: 0.05,
+    };
+
+    function updateLeadGesture({
+        speed = 0,
+        rawSpeed = 0,
+        speedPxPerSecond = 0,
+        dx = 0,
+        dy = 0,
+        mouseDown = false,
+    } = {}) {
+        const contextIsRunning = Tone.getContext().rawContext.state === "running";
+
+        if (!isStarted && !contextIsRunning) {
+            return false;
+        }
+
+        const now = Tone.now();
+        const held = Boolean(mouseDown);
+        const normalizedSpeed = Number.isFinite(speed) ? speed : 0;
+        const pixelsPerSecond = Number.isFinite(speedPxPerSecond)
+            ? speedPxPerSecond
+            : 0;
+        const movementDistance = Number.isFinite(rawSpeed) && rawSpeed > 0
+            ? rawSpeed
+            : Math.sqrt(dx * dx + dy * dy);
+        const movementNorm = clamp(
+            Math.max(normalizedSpeed, movementDistance / 120, pixelsPerSecond / 4200),
+            0,
+            1
+        );
+        const dt = clamp(now - leadGestureState.lastUpdateTime, 1 / 120, 0.25);
+        leadGestureState.lastUpdateTime = now;
+
+        if (held && !leadGestureState.isDown) {
+            leadGestureState.isDown = true;
+            leadGestureState.holdStartTime = now;
+            leadGestureState.dragDistance = 0;
+            leadGestureState.dragEnergy = 0;
+
+            leadVoice.start();
+            leadVoice.setGainLevel(0.0);
+            leadVoice.setModulationIndex(leadGestureConfig.modIndexBase);
+            leadVoice.setHighOscGain(
+            0.0);
+            leadVoice.setVibDepth(0.0);
+            leadVoice.setPitch(getNearestStableDronePitch(randomItem(voices)));
+            // leadVoice.setHighOscPitch(getNearestStableDronePitch(randomItem(voices)));
+            leadVoice.setFilterFrequency(leadGestureConfig.filterPressHigh);
+            leadVoice.setGainLevel(
+                leadGestureConfig.pressGain,
+                leadGestureConfig.gainAttack
+            );
+            leadVoice.setFilterFrequency(
+                leadGestureConfig.filterPressLow,
+                leadGestureConfig.filterDropTime
+            );
+
+            return true;
+        }
+
+        if (!held && leadGestureState.isDown) {
+            leadGestureState.isDown = false;
+            leadGestureState.dragDistance = 0;
+            leadGestureState.dragEnergy = 0;
+
+            leadVoice.setGainLevel(0.0, leadGestureConfig.gainRelease);
+            leadVoice.setModulationIndex(0.0, 0.14);
+            leadVoice.setHighOscGain(0.);
+            leadVoice.setFilterFrequency(leadGestureConfig.filterPressLow, 0.2);
+
+            return true;
+        }
+
+        if (!held) {
+            return false;
+        }
+
+        const dragDecay = Math.exp(-leadGestureConfig.dragEnergyDecayPerSecond * dt);
+        leadGestureState.dragDistance = Math.min(
+            leadGestureState.dragDistance + movementDistance,
+            leadGestureConfig.dragDistanceMax
+        );
+        leadGestureState.dragEnergy = clamp(
+            leadGestureState.dragEnergy * dragDecay + movementNorm * (1 - dragDecay) * 2.2,
+            0,
+            1
+        );
+
+        const holdProgress = clamp(
+            (now - leadGestureState.holdStartTime) / leadGestureConfig.holdRiseSeconds,
+            0,
+            1
+        );
+        const dragProgress = clamp(
+            leadGestureState.dragDistance / leadGestureConfig.dragDistanceMax,
+            0,
+            1
+        );
+        const filterProgress = clamp(
+            holdProgress + leadGestureState.dragEnergy * 0.2 + dragProgress * 0.15,
+            0,
+            1
+        );
+        const filterTarget =
+            leadGestureConfig.filterPressLow +
+            filterProgress *
+                (leadGestureConfig.filterRiseMax - leadGestureConfig.filterPressLow);
+        const modIndexTarget =
+            leadGestureConfig.modIndexBase +
+            clamp(leadGestureState.dragEnergy * 0.85 + dragProgress * 0.4, 0, 1) *
+                leadGestureConfig.modIndexRange;
+        const gainTarget =
+            leadGestureConfig.pressGain +
+            holdProgress * leadGestureConfig.holdGainBoost;
+
+        leadVoice.setFilterFrequency(filterTarget, leadGestureConfig.filterRampTime);
+        // leadVoice.setModulationIndex(
+        //     modIndexTarget,
+        //     leadGestureConfig.modIndexRampTime
+        // );
+        leadVoice.setHighOscGain(
+            clamp(dragProgress * 1.5, 0, 1),
+            leadGestureConfig.modIndexRampTime
+        );
+        leadVoice.setVibDepth(
+            clamp(modIndexTarget / 4., 0, 0.2),
+            leadGestureConfig.modIndexRampTime
+        );
+        leadVoice.setGainLevel(gainTarget, 0.08);
+
+        return {
+            filterTarget,
+            modIndexTarget,
+            gainTarget,
+        };
+    }
 
     function getNearestStableDronePitch(voice) {
         const primaryPitch = voice.getPrimaryPitch();
@@ -832,6 +1219,7 @@ export function createEngine() {
         duckLoop.stop();
         perfLoop.stop();
         arpVoice.stop();
+        leadVoice.stop();
         Tone.Transport.stop();
         isStarted = false;
     }
@@ -839,6 +1227,7 @@ export function createEngine() {
     const dispose = () => {
         stop();
         arpVoice.dispose();
+        leadVoice.dispose();
         voices.forEach((voice) => voice.dispose());
         pitchSlideLoop.dispose();
         duckLoop.dispose();
@@ -848,7 +1237,7 @@ export function createEngine() {
     const voices = [voice1, voice2, voice3];
 
     const slideProbability = 0.25;
-    const slideCheckInterval = 2.0;
+    const slideCheckInterval = 1.0;
 
     const pitchSlideLoop = new Tone.Loop((time) => {
         if (Math.random() < slideProbability) {
@@ -911,12 +1300,17 @@ export function createEngine() {
     const audioEngine = {
         voices,
         arpVoice,
+        leadVoice,
+        createLead(options = {}) {
+            return lead(options);
+        },
         start,
         stop,
         dispose,
         makePitchSequence,
         playArpRun,
         triggerArpGesture,
+        updateLeadGesture,
         getPerfStats() {
             return { ...perfStats };
         },

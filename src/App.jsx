@@ -147,6 +147,7 @@ function App() {
         v.reverb.wet.rampTo(wet, 0.05);
       });
 
+      engineRef.current?.updateLeadGesture?.(ctl);
       engineRef.current?.triggerArpGesture?.(ctl);
 
       const controlDuration = performance.now() - controlStart;
@@ -159,33 +160,7 @@ function App() {
         controlPeakMsRef.current,
         controlDuration
       );
-    }, (clickData) => {
-        // let v = randomItem(engineRef.current.voices);
-        // let primaryPitch = v.getPrimaryPitch();
-        // let secondaryPitch = v.getSecondaryPitch();
-        // let targetPitch;
-        //   console.log("frequency: ", v.osc.frequency.value, "primary: ", primaryPitch);
-
-        // if (v.osc.frequency.value == primaryPitch) {
-        //   console.log("voice at primary pitch");
-        //   targetPitch = secondaryPitch;
-        // } else {
-        //   console.log("voice not at primary pitch");
-        //   targetPitch = primaryPitch;
-        // }
-        // if (clickData.x >= 0. && clickData.x <= 1.0 && clickData.y >= 0. && clickData.y <= 1.0 ) {
-        //   v.slideToPitch(targetPitch, Math.random() * 2.5 + 1.5);
-        // }
-        const notes = engineRef.current?.playArpRun?.({
-          numNotes: 8,
-          pitchRange: [60, 88],
-          repeatPitches: false,
-          noteDuration: 0.16,
-          noteSpacing: 0.08,
-          velocity: 0.72,
-        });
-        console.log("click!", clickData, "arp notes", notes);
-      }
+    }, () => {}
   );
 
     return () => {

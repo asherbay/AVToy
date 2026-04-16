@@ -12,6 +12,8 @@ export function mountSketch(containerEl, onControl, onClick) {
     let lastY = 0;
     let lastSpeed = 0;
     let lastControlTime = 0;
+    let lastMouseDownState = false;
+    let gestureActive = false;
 
     let testGrainSheet = null;
 
@@ -198,6 +200,27 @@ export function mountSketch(containerEl, onControl, onClick) {
     };
 
     p.draw = () => {
+      const pointerInCanvas =
+        p.mouseX >= 0 &&
+        p.mouseX <= p.width &&
+        p.mouseY >= 0 &&
+        p.mouseY <= p.height;
+      const currentX = Math.min(p.width, Math.max(0, p.mouseX));
+      const currentY = Math.min(p.height, Math.max(0, p.mouseY));
+      const mouseStateChanged = p.mouseIsPressed !== lastMouseDownState;
+
+      if (p.mouseIsPressed && pointerInCanvas && !lastMouseDownState) {
+        gestureActive = true;
+      }
+
+      if (gestureActive && (p.mouseIsPressed || mouseStateChanged)) {
+        sendControl(0, 0, "draw", currentX, currentY);
+      }
+      if (!p.mouseIsPressed) {
+        gestureActive = false;
+      }
+      lastMouseDownState = p.mouseIsPressed;
+
       p.background(0);
       if (!testGrainSheet) {
         return;
