@@ -297,7 +297,7 @@ export function createEngine() {
             metalLfo,
             vib,
             vibLfo,
-    
+
             triggerMetal() {
                 metal.triggerAttackRelease("C0", 10);
             },
@@ -324,6 +324,11 @@ export function createEngine() {
 
             isSliding() {
                 return Tone.now() < slideUntilTime;
+            },
+
+            setDrive(value) {
+                drive.distortion = clamp(value, 0.0, 1.0);
+                // console.log("setting drive to", drive.distortion);
             },
 
 
@@ -549,15 +554,15 @@ export function createEngine() {
 
     function lead({
         pitch = "C4",
-        harmonicity = 1.0,
+        harmonicity = 1.,
         modulationIndex = 0.0,
         filterFrequency = 4200,
         filterQ = 1.0,
         gainLevel = 0.12,
-        reverbDecay = 8,
-        reverbWet = 0.28,
-        fbDelayTime = 0.175,
-        fbGainLevel = 0.3,
+        // reverbDecay = 8,
+        // reverbWet = 0.98,
+        fbDelayTime = 0.375,
+        fbGainLevel = 0.9,
         fbFilterFrequency = 1000,
         driveAmount = 0.2,
     } = {}) {
@@ -568,19 +573,21 @@ export function createEngine() {
         });
 
         const gain = new Tone.Gain(gainLevel);
-        const reverb = new Tone.Reverb({
-            decay: reverbDecay,
-            wet: reverbWet,
-        });
+        // const reverb = new Tone.Reverb({
+        //     decay: reverbDecay,
+        //     wet: reverbWet,
+        // });
 
         // FB delay loop for extra texture
         const fbDelay = new Tone.Delay(fbDelayTime);
         const fbGain = new Tone.Gain(fbGainLevel);
         const fbFilter = new Tone.Filter(fbFilterFrequency, "lowpass");
         const drive = new Tone.Distortion(driveAmount);
+        const fbDelWet = new Tone.Gain(0.0);
 
         fbDelay.connect(fbFilter);
-        fbFilter.connect(drive);
+        fbFilter.connect(fbDelWet);
+        fbDelWet.connect(drive);
         drive.connect(fbGain);
         fbGain.connect(fbDelay);
 
@@ -596,7 +603,7 @@ export function createEngine() {
             frequency: Tone.Frequency((Tone.Frequency(pitch).toMidi() + 12), "midi").toNote(),
             type: "sawtooth",
             modulationType: "sine",
-            harmonicity,
+            harmonicity: 0.99,
             modulationIndex,
         });
 
@@ -614,15 +621,22 @@ export function createEngine() {
         });
         vibLfo.connect(vib.frequency);
 
+
+        const chorus = new Tone.Chorus(4, 2.5, 0.5)
+
         osc.connect(vib);
         highOsc.connect(highOscGain);
-        highOscGain.connect(filter);
-        vib.connect(filter);
+        highOscGain.connect(vib);
+        vib.connect(chorus);
+        chorus.connect(filter);
         filter.connect(gain);
-        gain.connect(reverb);
-       // gain.connect(reverb);
-        // fbDelay.connect(reverb);
-        reverb.toDestination();
+        gain.connect(fbDelWet);
+        fbDelWet.toDestination();
+        gain.toDestination();
+
+    //    gain.connect(reverb);
+    //     fbDelay.connect(reverb);
+    //     reverb.toDestination();
 
         let hasStarted = false;
         let hasStopped = false;
@@ -643,8 +657,9 @@ export function createEngine() {
             vibLfo,
             filter,
             gain,
-            reverb,
+            // reverb,
             fbDelay,
+            fbDelWet,
             fbGain,
             fbFilter,
             drive,
@@ -672,8 +687,12 @@ export function createEngine() {
                 rampParam(gain.gain, value, rampTime);
             },
 
+            setFbDelWet(value, rampTime = 3.0) {
+                rampParam(fbDelWet.gain, value, rampTime);
+            },
+
             setModulationIndex(value, rampTime = 0) {
-                rampParam(osc.modulationIndex, value, rampTime);
+                rampParam(highOsc.modulationIndex, value, rampTime);
             },
 
             setVibDepth(value, rampTime = 0) {
@@ -688,9 +707,9 @@ export function createEngine() {
                 rampParam(osc.harmonicity, value, rampTime);
             },
 
-            setReverbWet(value, rampTime = 0) {
-                rampParam(reverb.wet, value, rampTime);
-            },
+            // setReverbWet(value, rampTime = 0) {
+            //     rampParam(reverb.wet, value, rampTime);
+            // },
 
             start(time = Tone.now()) {
                 if (hasStarted || hasStopped) {
@@ -699,6 +718,7 @@ export function createEngine() {
 
                 osc.start(time);
                 highOsc.start(time);
+                chorus.start(time);
                 vibLfo.start(time);
                 hasStarted = true;
             },
@@ -717,8 +737,9 @@ export function createEngine() {
                 osc.dispose();
                 filter.dispose();
                 gain.dispose();
-                reverb.dispose();
+                // reverb.dispose();
                 fbDelay.dispose();
+                fbDelWet.dispose();
                 fbGain.dispose();
                 fbFilter.dispose();
                 drive.dispose();
@@ -838,17 +859,20 @@ export function createEngine() {
         dragDistance: 0,
         dragEnergy: 0,
         lastUpdateTime: Tone.now(),
+        pitchChangePoints: [],
+        nextPitchChangeIndex: 0,
+        previousDragProgress: 0,
     };
     const leadGestureConfig = {
         pressGain: 0.12,
         holdGainBoost: 0.08,
         gainAttack: 0.02,
-        gainRelease: 0.18,
+        gainRelease: 5.18,
         filterPressHigh: 7200,
         filterPressLow: 100,
         filterRiseMax: 5200,
-        filterDropTime: 0.1,
-        filterRampTime: 0.08,
+        filterDropTime: 5.1,
+        filterRampTime: 0.07,
         holdRiseSeconds: 12.0,
         dragDistanceMax: 1500,
         dragEnergyDecayPerSecond: 3.4,
@@ -871,6 +895,8 @@ export function createEngine() {
             return false;
         }
 
+
+
         const now = Tone.now();
         const held = Boolean(mouseDown);
         const normalizedSpeed = Number.isFinite(speed) ? speed : 0;
@@ -888,6 +914,8 @@ export function createEngine() {
         const dt = clamp(now - leadGestureState.lastUpdateTime, 1 / 120, 0.25);
         leadGestureState.lastUpdateTime = now;
 
+        let pitchChangePoints = [];
+
         if (held && !leadGestureState.isDown) {
             leadGestureState.isDown = true;
             leadGestureState.holdStartTime = now;
@@ -896,6 +924,7 @@ export function createEngine() {
 
             leadVoice.start();
             leadVoice.setGainLevel(0.0);
+            leadVoice.setFbDelWet(0.0);
             leadVoice.setModulationIndex(leadGestureConfig.modIndexBase);
             leadVoice.setHighOscGain(
             0.0);
@@ -912,6 +941,15 @@ export function createEngine() {
                 leadGestureConfig.filterDropTime
             );
 
+            leadGestureState.pitchChangePoints = Array.from(
+                { length: Math.floor(randomInRange(3, 8)) },
+                () => Math.random()
+                ).sort((a, b) => a - b);
+            console.log("pitch change points:", leadGestureState.pitchChangePoints);
+
+            leadGestureState.nextPitchChangeIndex = 0;
+            leadGestureState.previousDragProgress = 0;
+
             return true;
         }
 
@@ -922,8 +960,11 @@ export function createEngine() {
 
             leadVoice.setGainLevel(0.0, leadGestureConfig.gainRelease);
             leadVoice.setModulationIndex(0.0, 0.14);
+            leadVoice.setFbDelWet(0.0);
             leadVoice.setHighOscGain(0.);
             leadVoice.setFilterFrequency(leadGestureConfig.filterPressLow, 0.2);
+
+            voices[0].setDrive(0.);
 
             return true;
         }
@@ -970,20 +1011,47 @@ export function createEngine() {
             leadGestureConfig.pressGain +
             holdProgress * leadGestureConfig.holdGainBoost;
 
+
+        const leadInfluence = clamp(
+            holdProgress * 0.9 + dragProgress * 0.9,
+            0,
+            1
+        );
+
+        voices[0].setDrive(clamp(leadInfluence * 0.7, 0.2, 0.9));
+
+
         leadVoice.setFilterFrequency(filterTarget, leadGestureConfig.filterRampTime);
-        // leadVoice.setModulationIndex(
-        //     modIndexTarget,
-        //     leadGestureConfig.modIndexRampTime
-        // );
+        leadVoice.setModulationIndex(
+            modIndexTarget,
+            leadGestureConfig.modIndexRampTime * 4
+        );
+        leadVoice.setFbDelWet(clamp(dragProgress * 0.7, 0, 1));
         leadVoice.setHighOscGain(
             clamp(dragProgress * 1.5, 0, 1),
             leadGestureConfig.modIndexRampTime
         );
         leadVoice.setVibDepth(
-            clamp(modIndexTarget / 4., 0, 0.2),
+            clamp(modIndexTarget / 7., 0, 0.2),
             leadGestureConfig.modIndexRampTime
         );
-        leadVoice.setGainLevel(gainTarget, 0.08);
+        leadVoice.setGainLevel(gainTarget * 0.7, 0.08);
+
+        //intermittent pitch changes
+        //console.log("hold progress:", holdProgress.toFixed(2), "drag progress:", dragProgress.toFixed(2));
+        const point =
+            leadGestureState.pitchChangePoints[leadGestureState.nextPitchChangeIndex];
+
+            if (
+                point != null &&
+                leadGestureState.previousDragProgress < point &&
+                dragProgress >= point
+            ) {
+                leadVoice.setPitch(getNearestStableDronePitch(randomItem(voices)), randomInRange(0.2, 0.6));
+                leadGestureState.nextPitchChangeIndex += 1;
+            }
+
+            leadGestureState.previousDragProgress = dragProgress;
 
         return {
             filterTarget,
