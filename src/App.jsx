@@ -125,12 +125,12 @@ function App() {
 
       if (!hasLoggedMovementControlRef.current && ctl.rawSpeed > 0) {
         hasLoggedMovementControlRef.current = true;
-        console.log("movement control", {
-          source: ctl.source,
-          rawSpeed: ctl.rawSpeed,
-          speedPxPerSecond: ctl.speedPxPerSecond,
-          speed: ctl.speed,
-        });
+        // console.log("movement control", {
+        //   source: ctl.source,
+        //   rawSpeed: ctl.rawSpeed,
+        //   speedPxPerSecond: ctl.speedPxPerSecond,
+        //   speed: ctl.speed,
+        // });
       }
 
       // ctl.x, ctl.y, ctl.speed, ctl.mouseDown

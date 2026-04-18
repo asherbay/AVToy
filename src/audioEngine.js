@@ -14,6 +14,16 @@ export function createEngine() {
         return Math.min(max, Math.max(min, value));
     }
 
+    function lerp(value, inMin, inMax, outMin, outMax) {
+        if (inMax === inMin) {
+            return outMin;
+        }
+
+        const t = Math.min(1, Math.max(0, (value - inMin) / (inMax - inMin)));
+        return outMin + t * (outMax - outMin);
+    }
+
+
     function midiToNote(midi) {
         return Tone.Frequency(midi, "midi").toNote();
     }
@@ -415,7 +425,7 @@ export function createEngine() {
 
 
     function arp({
-        maxPolyphony = 8,
+        maxPolyphony = 5,
         harmonicity = 9.0,
         ampAttack = 0.1,
         ampDecay = 0.2,
@@ -492,7 +502,7 @@ export function createEngine() {
             const x = (Math.sin(phase) + 1) * 0.5;
             const value = modIndexLFOMin + x * (modIndexLFOMax - modIndexLFOMin);
             synth.set({ modulationIndex: value });
-        }, 1 / 30);
+        }, 1 / 10);
 
         synth.connect(synthGain);
         synthGain.connect(filter);
@@ -512,15 +522,15 @@ export function createEngine() {
             modIndexLoop,
 
             playRun(notes, {
-                noteDuration = 0.36,
-                noteSpacing = 0.03,
+                noteDuration = 0.24,
+                noteSpacing = 0.05,
                 velocity = 0.7,
                 startTime = Tone.now() + 0.01,
             } = {}) {
                 notes.forEach((note, index) => {
                     synth.triggerAttackRelease(
                         note,
-                        clamp(noteDuration + (Math.random() * 2.0 - 1.0), 0.05, 4.0),
+                        clamp(noteDuration + randomInRange(-0.05, 0.07), 0.05, 0.45),
                         startTime + index * noteSpacing,
                         velocity
                     );
@@ -585,6 +595,24 @@ export function createEngine() {
         const drive = new Tone.Distortion(driveAmount);
         const fbDelWet = new Tone.Gain(0.0);
 
+        const fbDelTimeLfo = new Tone.LFO({
+            frequency: 1.5,
+            min: fbDelayTime * 0.25,
+            max: fbDelayTime * 1.5,
+        });
+
+        fbDelTimeLfo.connect(fbDelay.delayTime);
+
+        const fbDelTimeLfoLfo = new Tone.LFO({
+            frequency: 1.5,
+            min: 0.5,
+            max: 5.,
+        });
+
+        fbDelTimeLfoLfo.connect(fbDelTimeLfo.frequency);
+        fbDelTimeLfo.connect(fbDelTimeLfoLfo.frequency)
+
+
         fbDelay.connect(fbFilter);
         fbFilter.connect(fbDelWet);
         fbDelWet.connect(drive);
@@ -598,6 +626,16 @@ export function createEngine() {
             harmonicity,
             modulationIndex,
         });
+
+        const oscGain = new Tone.Gain(1.0);
+
+        const oscModIndexLfo = new Tone.LFO({
+            frequency: 0.2,
+            min: 0.0,
+            max: 8.0,
+        });
+       oscModIndexLfo.connect(osc.modulationIndex.factor);
+
 
         const highOsc = new Tone.FMOscillator({
             frequency: Tone.Frequency((Tone.Frequency(pitch).toMidi() + 12), "midi").toNote(),
@@ -624,7 +662,8 @@ export function createEngine() {
 
         const chorus = new Tone.Chorus(4, 2.5, 0.5)
 
-        osc.connect(vib);
+        osc.connect(oscGain);
+        oscGain.connect(chorus);
         highOsc.connect(highOscGain);
         highOscGain.connect(vib);
         vib.connect(chorus);
@@ -651,6 +690,8 @@ export function createEngine() {
 
         return {
             osc,
+            oscGain,
+            oscModIndexLfo,
             highOsc,
             highOscGain,
             vib,
@@ -660,6 +701,8 @@ export function createEngine() {
             // reverb,
             fbDelay,
             fbDelWet,
+            fbDelTimeLfo,
+            fbDelTimeLfoLfo,
             fbGain,
             fbFilter,
             drive,
@@ -668,9 +711,19 @@ export function createEngine() {
             setPitch(value, rampTime = 0) {
                 if (rampTime > 0) {
                     osc.frequency.rampTo(value, rampTime);
-                    highOsc.frequency.rampTo(value * 2., rampTime);
+                    // highOsc.frequency.rampTo(value * 2., rampTime);
                 } else {
                     osc.frequency.value = Tone.Frequency(value).toFrequency();
+                    // highOsc.frequency.value = Tone.Frequency(value).toFrequency() * 2;
+                }
+            },
+
+            setHighOscPitch(value, rampTime = 0) {
+                if (rampTime > 0) {
+                    // osc.frequency.rampTo(value, rampTime);
+                    highOsc.frequency.rampTo(value * 2., rampTime);
+                } else {
+                    // osc.frequency.value = Tone.Frequency(value).toFrequency();
                     highOsc.frequency.value = Tone.Frequency(value).toFrequency() * 2;
                 }
             },
@@ -717,6 +770,9 @@ export function createEngine() {
                 }
 
                 osc.start(time);
+                oscModIndexLfo.start(time);
+                fbDelTimeLfo.start(time);
+                fbDelTimeLfoLfo.start(time);
                 highOsc.start(time);
                 chorus.start(time);
                 vibLfo.start(time);
@@ -729,12 +785,21 @@ export function createEngine() {
                 }
                 vibLfo.stop(time);
                 osc.stop(time);
+                fbDelTimeLfo.stop(time);
+                fbDelTimeLfoLfo.stop(time);
+                oscModIndexLfo.stop(time);
                 highOsc.stop(time);
                 hasStopped = true;
             },
 
             dispose() {
                 osc.dispose();
+                oscGain.dispose();
+                highOsc.dispose();
+                highOscGain.dispose();
+                fbDelTimeLfo.dispose();
+                fbDelTimeLfoLfo.dispose();
+                oscModIndexLfo.dispose();
                 filter.dispose();
                 gain.dispose();
                 // reverb.dispose();
@@ -776,6 +841,48 @@ export function createEngine() {
         return chordPair
 
     }
+
+    const systemState = {
+        engagement: 0,
+        agitation: 0,
+        lastUpdateTime: Tone.now(),
+    };
+
+
+    
+    function updateSystemState(
+        now = Tone.now(),
+        engagementInput = 0,
+        agitationInput = 0
+        ) {
+        const dt = Math.max(0, now - systemState.lastUpdateTime);
+        systemState.lastUpdateTime = now;
+
+        const engagementDecay = 0.2;
+        const agitationDecay = 0.8;
+
+        systemState.engagement = clamp(
+            systemState.engagement * Math.exp(-engagementDecay * dt) + engagementInput,
+            0,
+            1
+        );
+
+        systemState.agitation = clamp(
+            systemState.agitation * Math.exp(-agitationDecay * dt) + agitationInput,
+            0,
+            1
+        );
+    }
+
+    const systemStateMaintenanceLoop = new Tone.Loop(() => {
+        updateSystemState(Tone.now(), 0, 0);
+        updateDronePartialMorphSwells(Tone.now());
+        // console.log("system state:", {
+        //     engagement: systemState.engagement.toFixed(2),
+        //     agitation: systemState.agitation.toFixed(2),
+        // });
+    }, 0.1);
+
 
   // Original chords (voice1 voice2 voice3): [["C3", "D4", "F4"], ["Bb2", "C4", "G4"]];
   // cool spooky chords: [['C3', 'D#3', 'G3'],['G3', 'B2', 'E3']]
@@ -844,6 +951,8 @@ export function createEngine() {
         gainMax: 0.1,
         morphTarget: [0.04, 0.16, 0.28, 1.0, 0.6, 0.24, 0.1, 0.04],
     });
+
+
 
     const arpVoice = arp();
     const leadVoice = lead({
@@ -914,9 +1023,11 @@ export function createEngine() {
         const dt = clamp(now - leadGestureState.lastUpdateTime, 1 / 120, 0.25);
         leadGestureState.lastUpdateTime = now;
 
-        let pitchChangePoints = [];
+
+
 
         if (held && !leadGestureState.isDown) {
+            let randomPitch = getNearestStableDronePitch(randomItem(voices));
             leadGestureState.isDown = true;
             leadGestureState.holdStartTime = now;
             leadGestureState.dragDistance = 0;
@@ -929,11 +1040,12 @@ export function createEngine() {
             leadVoice.setHighOscGain(
             0.0);
             leadVoice.setVibDepth(0.0);
-            leadVoice.setPitch(getNearestStableDronePitch(randomItem(voices)));
+            leadVoice.setPitch(randomPitch);
+            leadVoice.setHighOscPitch(randomPitch);
             // leadVoice.setHighOscPitch(getNearestStableDronePitch(randomItem(voices)));
             leadVoice.setFilterFrequency(leadGestureConfig.filterPressHigh);
             leadVoice.setGainLevel(
-                leadGestureConfig.pressGain,
+                leadGestureConfig.pressGain * 0.3,
                 leadGestureConfig.gainAttack
             );
             leadVoice.setFilterFrequency(
@@ -945,7 +1057,7 @@ export function createEngine() {
                 { length: Math.floor(randomInRange(3, 8)) },
                 () => Math.random()
                 ).sort((a, b) => a - b);
-            console.log("pitch change points:", leadGestureState.pitchChangePoints);
+            // console.log("pitch change points:", leadGestureState.pitchChangePoints);
 
             leadGestureState.nextPitchChangeIndex = 0;
             leadGestureState.previousDragProgress = 0;
@@ -1026,9 +1138,9 @@ export function createEngine() {
             modIndexTarget,
             leadGestureConfig.modIndexRampTime * 4
         );
-        leadVoice.setFbDelWet(clamp(dragProgress * 0.7, 0, 1));
+        leadVoice.setFbDelWet(clamp(dragProgress, 0, 1));
         leadVoice.setHighOscGain(
-            clamp(dragProgress * 1.5, 0, 1),
+            clamp(dragProgress * 0.6, 0, 1),
             leadGestureConfig.modIndexRampTime
         );
         leadVoice.setVibDepth(
@@ -1037,17 +1149,20 @@ export function createEngine() {
         );
         leadVoice.setGainLevel(gainTarget * 0.7, 0.08);
 
+        updateSystemState(Tone.now(), 0.0025 * (holdProgress * 2.0), 0.003 * (dragProgress * 2.0) );
+
         //intermittent pitch changes
         //console.log("hold progress:", holdProgress.toFixed(2), "drag progress:", dragProgress.toFixed(2));
-        const point =
+        const pitchChangePoint =
             leadGestureState.pitchChangePoints[leadGestureState.nextPitchChangeIndex];
 
             if (
-                point != null &&
-                leadGestureState.previousDragProgress < point &&
-                dragProgress >= point
+                pitchChangePoint != null &&
+                leadGestureState.previousDragProgress < pitchChangePoint &&
+                dragProgress >= pitchChangePoint
             ) {
                 leadVoice.setPitch(getNearestStableDronePitch(randomItem(voices)), randomInRange(0.2, 0.6));
+                leadVoice.setHighOscPitch(getNearestStableDronePitch(randomItem(voices)), randomInRange(0.2, 0.6));
                 leadGestureState.nextPitchChangeIndex += 1;
             }
 
@@ -1150,6 +1265,9 @@ export function createEngine() {
     } = {}) {
         const contextIsRunning = Tone.getContext().rawContext.state === "running";
 
+        // if (leadGestureState.isDown) {
+        //     return false;
+        // }
         if (!isStarted && !contextIsRunning) {
             return false;
         }
@@ -1172,12 +1290,12 @@ export function createEngine() {
 
         if (!hasLoggedArpGestureInput && effectiveSpeed > 0.04) {
             hasLoggedArpGestureInput = true;
-            console.log("arp gesture input", {
-                speed: effectiveSpeed.toFixed(2),
-                frameDistance: frameDistance.toFixed(1),
-                speedPxPerSecond: pixelsPerSecond.toFixed(0),
-                context: Tone.getContext().rawContext.state,
-            });
+            // console.log("arp gesture input", {
+            //     speed: effectiveSpeed.toFixed(2),
+            //     frameDistance: frameDistance.toFixed(1),
+            //     speedPxPerSecond: pixelsPerSecond.toFixed(0),
+            //     context: Tone.getContext().rawContext.state,
+            // });
         }
 
         if (motionWeight > 0) {
@@ -1213,29 +1331,29 @@ export function createEngine() {
         const noteCount = clamp(
             Math.round(
                 4 +
-                effectiveSpeed * 6 +
-                distanceAmount * 5 +
-                randomInRange(-1, 2)
+                effectiveSpeed * 4 +
+                distanceAmount * 3 +
+                randomInRange(-1, 1)
             ),
             4,
-            15
+            10
         );
         const rangeSpread = 16 + Math.round(effectiveSpeed * 12 + distanceAmount * 8);
         const rangeCenter = 74 + Math.round(verticalBias * 8 + randomInRange(-3, 4));
         const minPitch = Math.round(clamp(rangeCenter - rangeSpread * 0.5, 52, 104));
         const maxPitch = Math.round(clamp(rangeCenter + rangeSpread * 0.5, minPitch + 3, 108));
         const noteSpacing = clamp(
-            0.15 -
-            effectiveSpeed * 0.085 -
-            distanceAmount * 0.025 +
-            randomInRange(-0.01, 0.015),
-            0.035,
-            0.16
+            0.17 -
+            effectiveSpeed * 0.07 -
+            distanceAmount * 0.02 +
+            randomInRange(-0.008, 0.012),
+            0.055,
+            0.18
         );
         const noteDuration = clamp(
-            0.12 + distanceAmount * 0.24 + randomInRange(-0.03, 0.12),
-            0.06,
-            0.55
+            0.1 + distanceAmount * 0.16 + randomInRange(-0.02, 0.06),
+            0.05,
+            0.32
         );
         const velocity = clamp(
             0.48 +
@@ -1259,35 +1377,42 @@ export function createEngine() {
         accumulatedGestureDistance = 0;
         accumulatedGestureY = 0;
 
-        console.log("gesture arp", {
-            notes,
-            speed: effectiveSpeed.toFixed(2),
-            numNotes: noteCount,
-            pitchRange: [minPitch, maxPitch],
-            noteSpacing: noteSpacing.toFixed(3),
-        });
+        updateSystemState(Tone.now(), 0.08, 0.12);
+
+        // console.log("gesture arp", {
+        //     notes,
+        //     speed: effectiveSpeed.toFixed(2),
+        //     numNotes: noteCount,
+        //     pitchRange: [minPitch, maxPitch],
+        //     noteSpacing: noteSpacing.toFixed(3),
+        // });
 
         return notes;
     }
 
     const start = () => {
         pitchSlideLoop.cancel(0);
+        systemStateMaintenanceLoop.cancel(0);
         duckLoop.cancel(0);
         perfLoop.cancel(0);
         arpVoice.start();
         pitchSlideLoop.start(0);
+        systemStateMaintenanceLoop.start(0);
         duckLoop.start(0);
         perfLoop.start(0);
+        partialSwellTestLoop.start(0);
         Tone.Transport.start();
         isStarted = true;
     }
 
     const stop = () => {
         pitchSlideLoop.stop();
+        systemStateMaintenanceLoop.stop();
         duckLoop.stop();
         perfLoop.stop();
         arpVoice.stop();
         leadVoice.stop();
+        partialSwellTestLoop.stop();
         Tone.Transport.stop();
         isStarted = false;
     }
@@ -1298,11 +1423,59 @@ export function createEngine() {
         leadVoice.dispose();
         voices.forEach((voice) => voice.dispose());
         pitchSlideLoop.dispose();
+        systemStateMaintenanceLoop.dispose();
         duckLoop.dispose();
         perfLoop.dispose();
+        partialSwellTestLoop.dispose();
     }
 
     const voices = [voice1, voice2, voice3];
+
+    const droneMorphState = voices.map(() => ({
+        active: false,
+        startTime: 0,
+        duration: 0,
+        peakAmount: 0,
+        baseAmount: 0,
+    }));
+
+
+
+    function triggerDronePartialMorphSwell(voiceIndex, peakAmount = 0.8, duration = 6) {
+        const now = Tone.now();
+        const state = droneMorphState[voiceIndex];
+
+        state.active = true;
+        state.startTime = now;
+        state.duration = duration;
+        state.peakAmount = peakAmount;
+        state.baseAmount = 0;
+
+        console.log(`triggering morph swell on voice ${voiceIndex} with peak ${peakAmount} and duration ${duration}`);
+    }
+
+
+    function updateDronePartialMorphSwells(now = Tone.now()) {
+        for (let i = 0; i < voices.length; i += 1) {
+            const state = droneMorphState[i];
+            if (!state.active) {
+            continue;
+            }
+
+            const progress = (now - state.startTime) / state.duration;
+
+            if (progress >= 1) {
+            state.active = false;
+            voices[i].setMorphAmount(state.baseAmount);
+            continue;
+            }
+
+            const hairpin = Math.sin(progress * Math.PI);
+            const amount = clamp(state.baseAmount + hairpin * state.peakAmount, 0, 1);
+            voices[i].setMorphAmount(amount);
+        }
+    }
+
 
     const slideProbability = 0.25;
     const slideCheckInterval = 1.0;
@@ -1322,6 +1495,13 @@ export function createEngine() {
 
         
 
+    const partialSwellTestLoop = new Tone.Loop((time) => {
+        if (Math.random() < 0.65) {
+            const voiceIndex = Math.floor(Math.random() * voices.length);
+            console.log("engagement: ", systemState.engagement.toFixed(2), "agitation: ", systemState.agitation.toFixed(2));
+            triggerDronePartialMorphSwell(voiceIndex, randomInRange(0.1, 0.3) * (lerp(systemState.engagement, 0, 1, 0., 1.3)), randomInRange(4, 6));
+        }
+    }, 8.0);
 
     const duckProbability = 0.75;
     const duckCheckInterval = 4.0;
