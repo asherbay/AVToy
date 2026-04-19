@@ -257,7 +257,7 @@ export function mountSketch(containerEl, onControl, onClick) {
           )
         );
 
-        drawGrain(grain, sx, sy);
+        // drawGrain(grain, sx, sy);
       }
 
       p.noTint();

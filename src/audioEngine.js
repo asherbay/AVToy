@@ -58,8 +58,8 @@ export function createEngine() {
         gainLfoRate = 0.3,
         gainMax = 0.5,
         delayTime = 0.5,
-        delayFeedback = 0.6,
-        delayWet = 0.3,
+        delayFeedback = 0.4,
+        delayWet = 0.,
         reverbDecay = 6,
         reverbWet = 0.,
 
@@ -267,7 +267,7 @@ export function createEngine() {
         gain.connect(fbDelay);
         gain.connect(limiter);
         fbDelay.connect(limiter);
-        // gain.toDestination();
+        
         limiter.toDestination();
 
         /* ================= API ================= */
@@ -426,8 +426,8 @@ export function createEngine() {
 
     function arp({
         maxPolyphony = 5,
-        harmonicity = 9.0,
-        ampAttack = 0.1,
+        harmonicity = 9.,
+        ampAttack = 0.,
         ampDecay = 0.2,
         ampSustain = 0.0,
         ampRelease = 0.9,
@@ -443,10 +443,10 @@ export function createEngine() {
         modIndexLFOMax = 9.0,
         modIndexLFORate = 0.56,
         delayTime = 0.18,
-        delayFeedback = 0.4,
+        delayFeedback = 0.8,
         delayMix = 0.3,
-        combDelayTime = 0.039,
-        combResonance = 0.3,
+        combDelayTime = 0.059,
+        combResonance = 0.0,
         synthGainLevel = 0.56,
         limiterThreshold = -6,
     } = {}) {
@@ -487,7 +487,31 @@ export function createEngine() {
         });
         const delay = new Tone.FeedbackDelay(delayTime, delayFeedback);
         delay.wet.value = delayMix;
+
+        // const delayLfo = new Tone.LFO({
+        //     frequency: 0.1,
+        //     min: delayTime * 0.95,
+        //     max: delayTime * 1.05,
+        // });
+        // delayLfo.connect(delay.delayTime);
+
+        // const delayLfolfo = new Tone.LFO({
+        //     frequency: 0.45,
+        //     min: 0.1,
+        //     max: 2,
+        // });
+        // delayLfolfo.connect(delayLfo.frequency);
+        // delayLfo.connect(delayLfolfo.frequency);
+
+        const shiftedLevel = new Tone.Gain(0.);
+        const shiftedDelay = new Tone.Delay(delayTime * 1.5, delayFeedback);
+        const pitchShift = new Tone.PitchShift(-12);
+
         const limiter = new Tone.Limiter(limiterThreshold);
+
+        const panner = new Tone.Panner(0);
+
+        
 
         const filterLfo = new Tone.LFO({
             frequency: filterLFORate,
@@ -504,12 +528,26 @@ export function createEngine() {
             synth.set({ modulationIndex: value });
         }, 1 / 10);
 
+        const combResLoop = new Tone.Loop((time) => {
+            systemState.agitation >= 0.3 ? comb.resonance.rampTo(lerp(systemState.engagement, 0, 0.99, 0.5, 0.99), 0.5) : comb.resonance.rampTo(0.0, 0.5);
+        }, 0.5);
+
+        const shiftedLevelLoop = new Tone.Loop((time) => {
+            systemState.engagement >= 0.25 ? shiftedLevel.gain.rampTo(lerp(systemState.engagement, 0, 1, 0.5, 1.5), 0.5) : shiftedLevel.gain.rampTo(0.0, 0.5);
+        }, 0.5);
+
         synth.connect(synthGain);
         synthGain.connect(filter);
+        filter.connect(shiftedDelay);
+        shiftedDelay.connect(shiftedLevel);
+        shiftedLevel.connect(pitchShift);
+        pitchShift.connect(comb);
         filter.connect(comb);
-        comb.connect(delay);
-        delay.connect(limiter);
-        limiter.toDestination();
+        // filter.connect(comb);
+        comb.connect(limiter);
+        // delay.connect(limiter);
+        limiter.connect(panner);
+        panner.toDestination();
 
         return {
             synth,
@@ -517,9 +555,17 @@ export function createEngine() {
             filter,
             comb,
             delay,
+            shiftedDelay,
+            pitchShift,
+            shiftedLevel,
+            // delayLfo,
+            // delayLfolfo,
             limiter,
+            panner,
             filterLfo,
             modIndexLoop,
+            combResLoop,
+            shiftedLevelLoop,
 
             playRun(notes, {
                 noteDuration = 0.24,
@@ -528,6 +574,15 @@ export function createEngine() {
                 startTime = Tone.now() + 0.01,
             } = {}) {
                 notes.forEach((note, index) => {
+                    // synth.set({harmonicity: randomItem([0.5, 1, 2, 3, 4, 5, 7, 9])});
+                    synth.set({
+                        envelope: {
+                            attack: randomItem([0.0, randomInRange(0.05, 0.15)]),
+                        },
+                        modulationEnvelope: {
+                            attack: randomItem([0.0, randomInRange(0.05, 0.15)]),
+                        }
+                    })
                     synth.triggerAttackRelease(
                         note,
                         clamp(noteDuration + randomInRange(-0.05, 0.07), 0.05, 0.45),
@@ -537,15 +592,35 @@ export function createEngine() {
                 });
             },
 
+            setPanner(value) {
+                panner.pan.rampTo(clamp(value, -1, 1), 0.05);
+            },
+
+            setShiftedLevel(value) {
+                shiftedLevel.gain.rampTo(clamp(value, 0, 1), 0.05);
+            },
+
+            setCombResonance(value) {   
+                comb.resonance.rampTo(clamp(value, 0, 0.), 0.25);
+            },
+
             start() {
                 filterLfo.start();
+                // delayLfo.start();
+                // delayLfolfo.start();
                 modIndexLoop.start();
+                combResLoop.start();
+                shiftedLevelLoop.start();
             },
 
             stop() {
                 filterLfo.stop();
+                // delayLfo.stop();
+                // delayLfolfo.stop();
                 modIndexLoop.stop();
                 synth.releaseAll();
+                combResLoop.stop();
+                shiftedLevelLoop.stop();
             },
 
             dispose() {
@@ -554,9 +629,17 @@ export function createEngine() {
                 filter.dispose();
                 comb.dispose();
                 delay.dispose();
+                shiftedDelay.dispose();
+                pitchShift.dispose();
+                shiftedLevel.dispose();
+                // delayLfo.dispose();
+                // delayLfolfo.dispose();
                 limiter.dispose();
+                panner.dispose();
                 filterLfo.dispose();
                 modIndexLoop.dispose();
+                combResLoop.dispose();
+                shiftedLevelLoop.dispose();
             },
         };
 
@@ -564,15 +647,15 @@ export function createEngine() {
 
     function lead({
         pitch = "C4",
-        harmonicity = 1.,
+        harmonicity = 1.0,
         modulationIndex = 0.0,
         filterFrequency = 4200,
         filterQ = 1.0,
-        gainLevel = 0.12,
+        gainLevel = 1.,
         // reverbDecay = 8,
         // reverbWet = 0.98,
         fbDelayTime = 0.375,
-        fbGainLevel = 0.9,
+        fbGainLevel = 0.7,
         fbFilterFrequency = 1000,
         driveAmount = 0.2,
     } = {}) {
@@ -582,7 +665,7 @@ export function createEngine() {
             Q: filterQ,
         });
 
-        const gain = new Tone.Gain(gainLevel);
+        const gain = new Tone.Gain(0.4);
         // const reverb = new Tone.Reverb({
         //     decay: reverbDecay,
         //     wet: reverbWet,
@@ -630,9 +713,9 @@ export function createEngine() {
         const oscGain = new Tone.Gain(1.0);
 
         const oscModIndexLfo = new Tone.LFO({
-            frequency: 0.2,
+            frequency: 0.5,
             min: 0.0,
-            max: 8.0,
+            max: 2.0,
         });
        oscModIndexLfo.connect(osc.modulationIndex.factor);
 
@@ -660,10 +743,10 @@ export function createEngine() {
         vibLfo.connect(vib.frequency);
 
 
-        const chorus = new Tone.Chorus(4, 2.5, 0.5)
+        const chorus = new Tone.Chorus({frequency: 1.5, delayTime: 3, depth: 0.6, type: "sine", spread: 90})
 
         osc.connect(oscGain);
-        oscGain.connect(chorus);
+        oscGain.connect(filter);
         highOsc.connect(highOscGain);
         highOscGain.connect(vib);
         vib.connect(chorus);
@@ -737,7 +820,7 @@ export function createEngine() {
             },
 
             setGainLevel(value, rampTime = 0) {
-                rampParam(gain.gain, value, rampTime);
+                rampParam(oscGain.gain, value, rampTime);
             },
 
             setFbDelWet(value, rampTime = 3.0) {
@@ -985,9 +1068,9 @@ export function createEngine() {
         holdRiseSeconds: 12.0,
         dragDistanceMax: 1500,
         dragEnergyDecayPerSecond: 3.4,
-        modIndexBase: 0.08,
-        modIndexRange: 18,
-        modIndexRampTime: 0.05,
+        modIndexBase: 0.0,
+        modIndexRange: 1.5,
+        modIndexRampTime: 4.05,
     };
 
     function updateLeadGesture({
@@ -1135,21 +1218,21 @@ export function createEngine() {
 
         leadVoice.setFilterFrequency(filterTarget, leadGestureConfig.filterRampTime);
         leadVoice.setModulationIndex(
-            modIndexTarget,
-            leadGestureConfig.modIndexRampTime * 4
+            modIndexTarget * 1.0,
+            leadGestureConfig.modIndexRampTime * 6
         );
         leadVoice.setFbDelWet(clamp(dragProgress, 0, 1));
         leadVoice.setHighOscGain(
-            clamp(dragProgress * 0.6, 0, 1),
+            clamp(dragProgress * 0.6, 0, 0.5),
             leadGestureConfig.modIndexRampTime
         );
         leadVoice.setVibDepth(
             clamp(modIndexTarget / 7., 0, 0.2),
             leadGestureConfig.modIndexRampTime
         );
-        leadVoice.setGainLevel(gainTarget * 0.7, 0.08);
+        leadVoice.setGainLevel(gainTarget, 0.08);
 
-        updateSystemState(Tone.now(), 0.0025 * (holdProgress * 2.0), 0.003 * (dragProgress * 2.0) );
+        updateSystemState(Tone.now(), 0.0015 * (holdProgress * 2.0), 0.002 * (dragProgress * 2.0) );
 
         //intermittent pitch changes
         //console.log("hold progress:", holdProgress.toFixed(2), "drag progress:", dragProgress.toFixed(2));
@@ -1262,6 +1345,7 @@ export function createEngine() {
         accel = 0,
         dx = 0,
         dy = 0,
+        x = 0,
     } = {}) {
         const contextIsRunning = Tone.getContext().rawContext.state === "running";
 
@@ -1364,6 +1448,11 @@ export function createEngine() {
             0.35,
             0.95
         );
+
+        const pan = x * 2 - 1;
+        arpVoice.setPanner(pan, 0.03);
+
+
         const notes = playArpRun({
             numNotes: noteCount,
             pitchRange: [minPitch, maxPitch],
@@ -1501,7 +1590,7 @@ export function createEngine() {
             console.log("engagement: ", systemState.engagement.toFixed(2), "agitation: ", systemState.agitation.toFixed(2));
             triggerDronePartialMorphSwell(voiceIndex, randomInRange(0.1, 0.3) * (lerp(systemState.engagement, 0, 1, 0., 1.3)), randomInRange(4, 6));
         }
-    }, 8.0);
+    }, 4.0);
 
     const duckProbability = 0.75;
     const duckCheckInterval = 4.0;
