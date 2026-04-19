@@ -527,7 +527,7 @@ export function createEngine() {
         }, 1 / 10);
 
         const combResLoop = new Tone.Loop((time) => {
-            systemState.agitation >= 0.3 ? comb.resonance.rampTo(lerp(systemState.engagement, 0, 0.99, 0.5, 0.99), 0.5) : comb.resonance.rampTo(0.0, 0.5);
+            systemState.agitation >= 0.3 ? comb.resonance.rampTo(lerp(systemState.engagement, 0, 0.99, 0.5, 0.9), 0.5) : comb.resonance.rampTo(0.0, 0.5);
         }, 0.5);
 
         const shiftedLevelLoop = new Tone.Loop((time) => {
@@ -735,6 +735,13 @@ export function createEngine() {
         });
 
         const highOscGain = new Tone.Gain(0.);
+        let baseOscFrequency = Tone.Frequency(pitch).toFrequency();
+        let baseHighOscFrequency = Tone.Frequency(
+            Tone.Frequency(pitch).toMidi() + 12,
+            "midi"
+        ).toFrequency();
+        let oscOctaveOffset = 0;
+        let highOscOctaveOffset = 0;
 
         const vib = new Tone.Vibrato({
             frequency: 2.5,
@@ -780,6 +787,24 @@ export function createEngine() {
             }
         }
 
+        function applyOscPitch(rampTime = 0) {
+            const target = baseOscFrequency * Math.pow(2, oscOctaveOffset);
+            if (rampTime > 0) {
+                osc.frequency.rampTo(target, rampTime);
+            } else {
+                osc.frequency.value = target;
+            }
+        }
+
+        function applyHighOscPitch(rampTime = 0) {
+            const target = baseHighOscFrequency * Math.pow(2, highOscOctaveOffset);
+            if (rampTime > 0) {
+                highOsc.frequency.rampTo(target, rampTime);
+            } else {
+                highOsc.frequency.value = target;
+            }
+        }
+
         return {
             osc,
             oscGain,
@@ -803,23 +828,13 @@ export function createEngine() {
 
 
             setPitch(value, rampTime = 0) {
-                if (rampTime > 0) {
-                    osc.frequency.rampTo(value, rampTime);
-                    // highOsc.frequency.rampTo(value * 2., rampTime);
-                } else {
-                    osc.frequency.value = Tone.Frequency(value).toFrequency();
-                    // highOsc.frequency.value = Tone.Frequency(value).toFrequency() * 2;
-                }
+                baseOscFrequency = Tone.Frequency(value).toFrequency();
+                applyOscPitch(rampTime);
             },
 
             setHighOscPitch(value, rampTime = 0) {
-                if (rampTime > 0) {
-                    // osc.frequency.rampTo(value, rampTime);
-                    highOsc.frequency.rampTo(value * 2., rampTime);
-                } else {
-                    // osc.frequency.value = Tone.Frequency(value).toFrequency();
-                    highOsc.frequency.value = Tone.Frequency(value).toFrequency() * 2;
-                }
+                baseHighOscFrequency = Tone.Frequency(value).toFrequency() * 2;
+                applyHighOscPitch(rampTime);
             },
 
             setFilterFrequency(value, rampTime = 0) {
@@ -856,6 +871,16 @@ export function createEngine() {
 
             setHarmonicity(value, rampTime = 0) {
                 rampParam(osc.harmonicity, value, rampTime);
+            },
+
+            setOscOctaveJump(enabled, rampTime = 0.03) {
+                oscOctaveOffset = enabled ? 1 : 0;
+                applyOscPitch(rampTime);
+            },
+
+            setHighOscOctaveJump(enabled, rampTime = 0.03) {
+                highOscOctaveOffset = enabled ? 1 : 0;
+                applyHighOscPitch(rampTime);
             },
 
             triggerClickDelaySplash(
@@ -1006,6 +1031,9 @@ export function createEngine() {
         //     agitation: systemState.agitation.toFixed(2),
         // });
     }, 0.1);
+    const leadOctaveJumpLoop = new Tone.Loop((time) => {
+        updateLeadOctaveJumps(time);
+    }, 0.05);
 
 
   // Original chords (voice1 voice2 voice3): [["C3", "D4", "F4"], ["Bb2", "C4", "G4"]];
@@ -1096,6 +1124,17 @@ export function createEngine() {
         nextPitchChangeIndex: 0,
         previousDragProgress: 0,
     };
+    const leadOctaveJumpState = {
+        threshold: 0.77,
+        osc: {
+            isUp: false,
+            nextChangeTime: Tone.now() + randomInRange(0.08, 0.18),
+        },
+        high: {
+            isUp: false,
+            nextChangeTime: Tone.now() + randomInRange(0.12, 0.24),
+        },
+    };
     const leadGestureConfig = {
         pressGain: 0.18,
         holdBaseGain: 0.11,
@@ -1118,6 +1157,79 @@ export function createEngine() {
         modIndexRange: 1.5,
         modIndexRampTime: 4.05,
     };
+
+    function scheduleNextLeadOctaveChange(entry, agitation, now = Tone.now()) {
+        const minInterval = lerp(
+            agitation,
+            leadOctaveJumpState.threshold,
+            1,
+            0.01,
+            0.05
+        );
+        const maxInterval = lerp(
+            agitation,
+            leadOctaveJumpState.threshold,
+            1,
+            0.12,
+            0.04
+        );
+        entry.nextChangeTime = now + randomInRange(
+            Math.min(minInterval, maxInterval),
+            Math.max(minInterval, maxInterval)
+        );
+    }
+
+    function resetLeadOctaveJump(entry, setter, now = Tone.now()) {
+        if (entry.isUp) {
+            setter(false, 0.05);
+            entry.isUp = false;
+        }
+        entry.nextChangeTime = now + randomInRange(0.08, 0.18);
+    }
+
+    function updateLeadOctaveJumps(now = Tone.now()) {
+        const agitation = systemState.agitation;
+        const shouldJump =
+            leadGestureState.isDown &&
+            agitation >= leadOctaveJumpState.threshold;
+
+        if (!shouldJump) {
+            resetLeadOctaveJump(
+                leadOctaveJumpState.osc,
+                leadVoice.setOscOctaveJump,
+                now
+            );
+            resetLeadOctaveJump(
+                leadOctaveJumpState.high,
+                leadVoice.setHighOscOctaveJump,
+                now
+            );
+            return;
+        }
+
+        const jumpRamp = lerp(
+            agitation,
+            leadOctaveJumpState.threshold,
+            1,
+            0.005,
+            0.0015
+        );
+
+        if (now >= leadOctaveJumpState.osc.nextChangeTime) {
+            leadOctaveJumpState.osc.isUp = !leadOctaveJumpState.osc.isUp;
+            leadVoice.setOscOctaveJump(leadOctaveJumpState.osc.isUp, jumpRamp);
+            scheduleNextLeadOctaveChange(leadOctaveJumpState.osc, agitation, now);
+        }
+
+        if (now >= leadOctaveJumpState.high.nextChangeTime) {
+            leadOctaveJumpState.high.isUp = !leadOctaveJumpState.high.isUp;
+            leadVoice.setHighOscOctaveJump(
+                leadOctaveJumpState.high.isUp,
+                jumpRamp
+            );
+            scheduleNextLeadOctaveChange(leadOctaveJumpState.high, agitation, now);
+        }
+    }
 
     function updateLeadGesture({
         speed = 0,
@@ -1539,11 +1651,13 @@ export function createEngine() {
     const start = () => {
         pitchSlideLoop.cancel(0);
         systemStateMaintenanceLoop.cancel(0);
+        leadOctaveJumpLoop.cancel(0);
         duckLoop.cancel(0);
         perfLoop.cancel(0);
         arpVoice.start();
         pitchSlideLoop.start(0);
         systemStateMaintenanceLoop.start(0);
+        leadOctaveJumpLoop.start(0);
         duckLoop.start(0);
         perfLoop.start(0);
         partialSwellTestLoop.start(0);
@@ -1554,6 +1668,7 @@ export function createEngine() {
     const stop = () => {
         pitchSlideLoop.stop();
         systemStateMaintenanceLoop.stop();
+        leadOctaveJumpLoop.stop();
         duckLoop.stop();
         perfLoop.stop();
         arpVoice.stop();
@@ -1572,6 +1687,7 @@ export function createEngine() {
         droneReverb.dispose();
         pitchSlideLoop.dispose();
         systemStateMaintenanceLoop.dispose();
+        leadOctaveJumpLoop.dispose();
         duckLoop.dispose();
         perfLoop.dispose();
         partialSwellTestLoop.dispose();
