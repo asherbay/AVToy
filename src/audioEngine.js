@@ -163,8 +163,8 @@ export function createEngine() {
 
         const fromPartials = [1,0,0,0,0,0,0,0];
         let toPartials = morphTarget.slice();
-        const primaryPitchHz = Tone.Frequency(pitch).toFrequency();
-        const secondaryPitchHz = Tone.Frequency(secondaryPitch).toFrequency();
+        let primaryPitchHz = Tone.Frequency(pitch).toFrequency();
+        let secondaryPitchHz = Tone.Frequency(secondaryPitch).toFrequency();
         let currentPitchTarget = primaryPitchHz;
         let slideUntilTime = 0;
 
@@ -349,6 +349,25 @@ export function createEngine() {
 
                 currentPitchTarget = pitchTarget;
                 slideUntilTime = Tone.now() + rampDuration;
+            },
+
+            setPitchPair(primaryPitch, secondaryPitch, duration = 2.5, targetSlot = "current") {
+                const previousPrimaryPitchHz = primaryPitchHz;
+                const previousSecondaryPitchHz = secondaryPitchHz;
+                const wasAtPrimary = targetSlot === "primary"
+                    ? true
+                    : targetSlot === "secondary"
+                    ? false
+                    : Math.abs(currentPitchTarget - previousPrimaryPitchHz) <=
+                        Math.abs(currentPitchTarget - previousSecondaryPitchHz);
+
+                primaryPitchHz = Tone.Frequency(primaryPitch).toFrequency();
+                secondaryPitchHz = Tone.Frequency(secondaryPitch).toFrequency();
+
+                this.slideToPitch(
+                    wasAtPrimary ? primaryPitchHz : secondaryPitchHz,
+                    duration
+                );
             },
             
             startTransport() {
@@ -991,10 +1010,29 @@ export function createEngine() {
 
     }
 
+    // Original chords (voice1 voice2 voice3): [["C3", "D4", "F4"], ["Bb2", "C4", "G4"]];
+    // cool spooky chords: [['C3', 'D#3', 'G3'],['G3', 'B2', 'E3']]
+    const chordPair1 = [['C3', 'D#3', 'G3'],['G3', 'B2', 'E3']];
+    const spaceChordPair = [
+        ["C3", "G3", "D4"],
+        ["A2", "E3", "B3"],
+    ];
+    // prettier option:
+    // const spaceChordPair = [
+    //     ["C3", "F3", "A3"],
+    //     ["G2", "B2", "D3"],
+    // ];
+
     const systemState = {
         engagement: 0,
         agitation: 0,
         lastUpdateTime: Tone.now(),
+    };
+    const harmonyShiftState = {
+        threshold: 0.3,
+        useAlternate: false,
+        originalChordPair: chordPair1,
+        alternateChordPair: spaceChordPair,
     };
 
 
@@ -1023,6 +1061,35 @@ export function createEngine() {
         );
     }
 
+    function applyChordPair(chordPair, duration = randomInRange(2.8, 4.8)) {
+
+        voices.forEach((voice, index) => {
+            const targetSlot = voice.isAtPrimaryPitch?.() ? "primary" : "secondary";
+            voice.setPitchPair?.(
+                chordPair[0][index],
+                chordPair[1][index],
+                duration,
+                targetSlot
+            );
+        });
+    }
+
+    function toggleHarmonyShift(duration = randomInRange(2.8, 4.8)) {
+        harmonyShiftState.useAlternate = !harmonyShiftState.useAlternate;
+
+        applyChordPair(
+            harmonyShiftState.useAlternate
+                ? harmonyShiftState.alternateChordPair
+                : harmonyShiftState.originalChordPair,
+            duration
+        );
+    }
+
+    function resetHarmonyShift(duration = 0.01) {
+        harmonyShiftState.useAlternate = false;
+        applyChordPair(harmonyShiftState.originalChordPair, duration);
+    }
+
     const systemStateMaintenanceLoop = new Tone.Loop(() => {
         updateSystemState(Tone.now(), 0, 0);
         updateDronePartialMorphSwells(Tone.now());
@@ -1031,16 +1098,14 @@ export function createEngine() {
         //     agitation: systemState.agitation.toFixed(2),
         // });
     }, 0.1);
+    const harmonyShiftLoop = new Tone.Loop(() => {
+        if (systemState.engagement >= harmonyShiftState.threshold) {
+            toggleHarmonyShift();
+        }
+    }, 9.0);
     const leadOctaveJumpLoop = new Tone.Loop((time) => {
         updateLeadOctaveJumps(time);
     }, 0.05);
-
-
-  // Original chords (voice1 voice2 voice3): [["C3", "D4", "F4"], ["Bb2", "C4", "G4"]];
-  // cool spooky chords: [['C3', 'D#3', 'G3'],['G3', 'B2', 'E3']]
-
-
-    const chordPair1 = [['C3', 'D#3', 'G3'],['G3', 'B2', 'E3']];
 
 
 
@@ -1651,12 +1716,15 @@ export function createEngine() {
     const start = () => {
         pitchSlideLoop.cancel(0);
         systemStateMaintenanceLoop.cancel(0);
+        harmonyShiftLoop.cancel(0);
         leadOctaveJumpLoop.cancel(0);
         duckLoop.cancel(0);
         perfLoop.cancel(0);
+        resetHarmonyShift();
         arpVoice.start();
         pitchSlideLoop.start(0);
         systemStateMaintenanceLoop.start(0);
+        harmonyShiftLoop.start(0);
         leadOctaveJumpLoop.start(0);
         duckLoop.start(0);
         perfLoop.start(0);
@@ -1668,6 +1736,7 @@ export function createEngine() {
     const stop = () => {
         pitchSlideLoop.stop();
         systemStateMaintenanceLoop.stop();
+        harmonyShiftLoop.stop();
         leadOctaveJumpLoop.stop();
         duckLoop.stop();
         perfLoop.stop();
@@ -1687,6 +1756,7 @@ export function createEngine() {
         droneReverb.dispose();
         pitchSlideLoop.dispose();
         systemStateMaintenanceLoop.dispose();
+        harmonyShiftLoop.dispose();
         leadOctaveJumpLoop.dispose();
         duckLoop.dispose();
         perfLoop.dispose();
