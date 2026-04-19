@@ -33,6 +33,14 @@ export function createEngine() {
         audioCallbackPeakMs: 0,
     };
 
+    const droneReverbSend = new Tone.Gain(0.4);
+    const droneReverb = new Tone.Reverb({
+        decay: 6,
+        wet: 1.0,
+    });
+    droneReverbSend.connect(droneReverb);
+    droneReverb.toDestination();
+
     function drone({
         // pitch / drone
         pitch = "C4",
@@ -60,8 +68,6 @@ export function createEngine() {
         delayTime = 0.5,
         delayFeedback = 0.4,
         delayWet = 0.,
-        reverbDecay = 6,
-        reverbWet = 0.,
 
         // modulation index LFO
         modIndexMin = 0.0,
@@ -101,11 +107,6 @@ export function createEngine() {
             delayTime,
             feedback: delayFeedback,
             wet: delayWet,
-        });
-
-        const reverb = new Tone.Reverb({
-            decay: reverbDecay,
-            wet: reverbWet,
         });
 
         const vib = new Tone.Vibrato({
@@ -262,12 +263,11 @@ export function createEngine() {
         vib.connect(filter);
         filter.connect(duckGain);
         duckGain.connect(delay);
-        delay.connect(reverb);
-        reverb.connect(gain);
+        delay.connect(gain);
         gain.connect(fbDelay);
         gain.connect(limiter);
         fbDelay.connect(limiter);
-        
+        limiter.connect(droneReverbSend);
         limiter.toDestination();
 
         /* ================= API ================= */
@@ -283,7 +283,6 @@ export function createEngine() {
             detuneOsc,
             filter,
             delay,
-            reverb,
             oscGain,
             oscMorphTap,
             detuneGain,
@@ -394,7 +393,6 @@ export function createEngine() {
                 detuneOsc.dispose();
                 filter.dispose();
                 delay.dispose();
-                reverb.dispose();
                 oscGain.dispose();
                 oscMorphTap.dispose();
                 detuneGain.dispose();
@@ -658,6 +656,8 @@ export function createEngine() {
         fbGainLevel = 0.7,
         fbFilterFrequency = 1000,
         driveAmount = 0.2,
+        clickDelayTime = 0.09,
+        clickDelayFeedback = 0.82,
     } = {}) {
         const filter = new Tone.Filter({
             frequency: filterFrequency,
@@ -677,6 +677,12 @@ export function createEngine() {
         const fbFilter = new Tone.Filter(fbFilterFrequency, "lowpass");
         const drive = new Tone.Distortion(driveAmount);
         const fbDelWet = new Tone.Gain(0.0);
+        const delSendGain = new Tone.Gain(0.0);
+        const clickDelay = new Tone.FeedbackDelay({
+            delayTime: clickDelayTime,
+            feedback: clickDelayFeedback,
+            wet: 1.0,
+        });
 
         const fbDelTimeLfo = new Tone.LFO({
             frequency: 1.5,
@@ -753,7 +759,10 @@ export function createEngine() {
         chorus.connect(filter);
         filter.connect(gain);
         gain.connect(fbDelWet);
+        gain.connect(delSendGain);
+        delSendGain.connect(clickDelay);
         fbDelWet.toDestination();
+        clickDelay.toDestination();
         gain.toDestination();
 
     //    gain.connect(reverb);
@@ -784,6 +793,8 @@ export function createEngine() {
             // reverb,
             fbDelay,
             fbDelWet,
+            delSendGain,
+            clickDelay,
             fbDelTimeLfo,
             fbDelTimeLfoLfo,
             fbGain,
@@ -827,6 +838,10 @@ export function createEngine() {
                 rampParam(fbDelWet.gain, value, rampTime);
             },
 
+            setDelSendGain(value, rampTime = 0) {
+                rampParam(delSendGain.gain, value, rampTime);
+            },
+
             setModulationIndex(value, rampTime = 0) {
                 rampParam(highOsc.modulationIndex, value, rampTime);
             },
@@ -841,6 +856,30 @@ export function createEngine() {
 
             setHarmonicity(value, rampTime = 0) {
                 rampParam(osc.harmonicity, value, rampTime);
+            },
+
+            triggerClickDelaySplash(
+                peak = 0.42,
+                attackTime = 0.02,
+                releaseTime = 1.1
+            ) {
+                const now = Tone.now();
+                const currentValue = delSendGain.gain.value;
+
+                clickDelay.delayTime.value = randomInRange(0.005, 0.06);
+                delSendGain.gain.cancelScheduledValues(now);
+                delSendGain.gain.setValueAtTime(currentValue, now);
+
+                if (attackTime > 0) {
+                    delSendGain.gain.linearRampToValueAtTime(peak, now + attackTime);
+                } else {
+                    delSendGain.gain.setValueAtTime(peak, now);
+                }
+
+                delSendGain.gain.linearRampToValueAtTime(
+                    0.0,
+                    now + attackTime + releaseTime
+                );
             },
 
             // setReverbWet(value, rampTime = 0) {
@@ -888,6 +927,8 @@ export function createEngine() {
                 // reverb.dispose();
                 fbDelay.dispose();
                 fbDelWet.dispose();
+                delSendGain.dispose();
+                clickDelay.dispose();
                 fbGain.dispose();
                 fbFilter.dispose();
                 drive.dispose();
@@ -1056,10 +1097,15 @@ export function createEngine() {
         previousDragProgress: 0,
     };
     const leadGestureConfig = {
-        pressGain: 0.12,
+        pressGain: 0.18,
+        holdBaseGain: 0.11,
         holdGainBoost: 0.08,
         gainAttack: 0.02,
         gainRelease: 5.18,
+        quickReleaseMaxHold: 0.5,
+        clickDelaySplashPeak: 0.42,
+        clickDelaySplashAttack: 0.02,
+        clickDelaySplashRelease: 1.1,
         filterPressHigh: 7200,
         filterPressLow: 100,
         filterRiseMax: 5200,
@@ -1128,7 +1174,7 @@ export function createEngine() {
             // leadVoice.setHighOscPitch(getNearestStableDronePitch(randomItem(voices)));
             leadVoice.setFilterFrequency(leadGestureConfig.filterPressHigh);
             leadVoice.setGainLevel(
-                leadGestureConfig.pressGain * 0.3,
+                leadGestureConfig.pressGain,
                 leadGestureConfig.gainAttack
             );
             leadVoice.setFilterFrequency(
@@ -1149,6 +1195,7 @@ export function createEngine() {
         }
 
         if (!held && leadGestureState.isDown) {
+            const holdDuration = now - leadGestureState.holdStartTime;
             leadGestureState.isDown = false;
             leadGestureState.dragDistance = 0;
             leadGestureState.dragEnergy = 0;
@@ -1158,6 +1205,14 @@ export function createEngine() {
             leadVoice.setFbDelWet(0.0);
             leadVoice.setHighOscGain(0.);
             leadVoice.setFilterFrequency(leadGestureConfig.filterPressLow, 0.2);
+
+            if (holdDuration <= leadGestureConfig.quickReleaseMaxHold) {
+                leadVoice.triggerClickDelaySplash(
+                    leadGestureConfig.clickDelaySplashPeak,
+                    leadGestureConfig.clickDelaySplashAttack,
+                    leadGestureConfig.clickDelaySplashRelease
+                );
+            }
 
             voices[0].setDrive(0.);
 
@@ -1202,9 +1257,10 @@ export function createEngine() {
             leadGestureConfig.modIndexBase +
             clamp(leadGestureState.dragEnergy * 0.85 + dragProgress * 0.4, 0, 1) *
                 leadGestureConfig.modIndexRange;
+        const holdGainProgress = holdProgress * (1 - holdProgress * 0.45);
         const gainTarget =
-            leadGestureConfig.pressGain +
-            holdProgress * leadGestureConfig.holdGainBoost;
+            leadGestureConfig.holdBaseGain +
+            holdGainProgress * leadGestureConfig.holdGainBoost;
 
 
         const leadInfluence = clamp(
@@ -1222,8 +1278,9 @@ export function createEngine() {
             leadGestureConfig.modIndexRampTime * 6
         );
         leadVoice.setFbDelWet(clamp(dragProgress, 0, 1));
+        const highOscProgress = dragProgress * (1 - dragProgress * 0.55);
         leadVoice.setHighOscGain(
-            clamp(dragProgress * 0.6, 0, 0.5),
+            clamp(highOscProgress * 0.6, 0, 0.32),
             leadGestureConfig.modIndexRampTime
         );
         leadVoice.setVibDepth(
@@ -1511,6 +1568,8 @@ export function createEngine() {
         arpVoice.dispose();
         leadVoice.dispose();
         voices.forEach((voice) => voice.dispose());
+        droneReverbSend.dispose();
+        droneReverb.dispose();
         pitchSlideLoop.dispose();
         systemStateMaintenanceLoop.dispose();
         duckLoop.dispose();

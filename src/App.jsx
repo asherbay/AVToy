@@ -4,10 +4,6 @@ import * as Tone from "tone";
 import { createEngine } from "./audioEngine";
 import { mountSketch } from "./sketch";
 
-function linMap(x, min, max) {
-  return min + x * (max - min);
-}
-
 function lerp(a, b, t) {
   return a + (b - a) * t;
 }
@@ -132,20 +128,6 @@ function App() {
         //   speed: ctl.speed,
         // });
       }
-
-      // ctl.x, ctl.y, ctl.speed, ctl.mouseDown
-      // hook these into your Tone engine here
-      // e.g. engineRef.current?.forEach(v => v.setSomething(ctl.x))
-      engineRef.current?.voices.forEach((v) => {
-        // Y controls reverb wet
-        const wet =
-          linMap(Math.abs(ctl.y), 0, 1.0) < 0.01
-            ? 0.01
-            : linMap(Math.abs(ctl.y), 0, 1.0) >= 1.0
-            ? 1.0
-            : linMap(Math.abs(ctl.y), 0, 1.0);
-        v.reverb.wet.rampTo(wet, 0.05);
-      });
 
       engineRef.current?.updateLeadGesture?.(ctl);
       engineRef.current?.triggerArpGesture?.(ctl);
