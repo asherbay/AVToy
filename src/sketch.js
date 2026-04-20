@@ -1,21 +1,51 @@
 import p5 from "p5";
 
-const grainImageUrl = new URL("./images/intricate.jpg", import.meta.url).href;
+const grainImageUrls = [
+  new URL("./images/pollock5.jpg", import.meta.url).href,
+  new URL("./images/pollock4.jpg", import.meta.url).href,
+];
+const droneXfadeImageUrl = new URL(
+  "./images/complex2.webp",
+  import.meta.url
+).href;
 
-export function mountSketch(containerEl, onControl, onClick) {
+export function mountSketch(
+  containerEl,
+  onControl,
+  onClick,
+  getAudioLevel,
+  getDrone2Level
+) {
   let cleanupPointerMove = () => {};
+  let registerArpPulseFn = () => {};
 
   const instance = new p5((p) => {
-    let sourceImage = null;
+    let sourceImages = [];
+    let droneXfadeImage = null;
     let canvasEl = null;
+    let grainBuffer = null;
+    let echoBuffer = null;
     let lastX = 0;
     let lastY = 0;
     let lastSpeed = 0;
     let lastControlTime = 0;
     let lastMouseDownState = false;
     let gestureActive = false;
+    let smoothedAudioLevel = 0;
+    let smoothedDrone2Level = 0;
+    let lastDrawTimeMs = 0;
+    let echoFrameCounter = 0;
 
     let testGrainSheet = null;
+    const activeArpPulses = [];
+    const droneXfadeClusters = [];
+    const grainBufferScale = 0.45;
+    const echoFadeAlpha = 10;
+    const echoMixAlpha = 0.22;
+    const echoFrameStride = 5;
+    const grainBlurPx = 2.5;
+    const echoBlurPx = 0;
+    const droneXfadeMaxMix = 0.72;
 
     function sendControl(dx, dy, source = "draw", x = p.mouseX, y = p.mouseY) {
       if (!onControl) {
@@ -74,11 +104,22 @@ export function mountSketch(containerEl, onControl, onClick) {
       lastY = y;
     }
 
-    function randomMorphDuration() {
-      return p.random(1400, 3200);
+    function randomSampleTravelSpeed() {
+      return p.random(22, 38);
     }
 
-    function randomSamplePosition(w, h) {
+    function getMorphDuration(startSample, targetSample) {
+      const distance = Math.hypot(
+        targetSample.sx - startSample.sx,
+        targetSample.sy - startSample.sy
+      );
+      const pxPerSecond = randomSampleTravelSpeed();
+      const durationMs = (distance / pxPerSecond) * 1000;
+
+      return p.constrain(durationMs, 1600, 7200);
+    }
+
+    function randomSamplePosition(sourceImage, w, h) {
       const maxSx = Math.max(0, sourceImage.width - w);
       const maxSy = Math.max(0, sourceImage.height - h);
 
@@ -88,27 +129,254 @@ export function mountSketch(containerEl, onControl, onClick) {
       };
     }
 
-    function setNextGrainTarget(grain, now) {
+    function setNextGrainTarget(grain) {
       grain.startSx = grain.targetSx;
       grain.startSy = grain.targetSy;
 
-      const nextTarget = randomSamplePosition(grain.w, grain.h);
+      const nextTarget = randomSamplePosition(grain.sourceImage, grain.w, grain.h);
       grain.targetSx = nextTarget.sx;
       grain.targetSy = nextTarget.sy;
-      grain.morphStartTime = now;
-      grain.morphDuration = randomMorphDuration();
+      grain.morphDuration = getMorphDuration(
+        { sx: grain.startSx, sy: grain.startSy },
+        nextTarget
+      );
     }
 
-    function makeGrain(w, h, x, y, rotation) {
-      if (!sourceImage) {
+    function createDroneXfadeClusters() {
+      droneXfadeClusters.length = 0;
+
+      for (let i = 0; i < 4; i += 1) {
+        droneXfadeClusters.push({
+          baseX: p.random(p.width),
+          baseY: p.random(p.height),
+          driftX: p.random(42, 135),
+          driftY: p.random(42, 135),
+          phaseX: p.random(Math.PI * 2),
+          phaseY: p.random(Math.PI * 2),
+          rateX: p.random(0.016, 0.045) * Math.PI * 2,
+          rateY: p.random(0.014, 0.04) * Math.PI * 2,
+          radius: p.random(180, 300),
+          radiusDepth: p.random(0.08, 0.18),
+          radiusRate: p.random(0.012, 0.032) * Math.PI * 2,
+          radiusPhase: p.random(Math.PI * 2),
+          strengthRate: p.random(0.018, 0.05) * Math.PI * 2,
+          strengthPhase: p.random(Math.PI * 2),
+        });
+      }
+    }
+
+    function getDroneXfadeClusterStates(nowMs) {
+      const time = nowMs * 0.001;
+
+      return droneXfadeClusters.map((cluster) => {
+        const radiusScale =
+          1 +
+          Math.sin(time * cluster.radiusRate + cluster.radiusPhase) *
+            cluster.radiusDepth;
+        const strengthWave =
+          (Math.sin(time * cluster.strengthRate + cluster.strengthPhase) + 1) *
+          0.5;
+
+        return {
+          x: cluster.baseX + Math.sin(time * cluster.rateX + cluster.phaseX) * cluster.driftX,
+          y: cluster.baseY + Math.sin(time * cluster.rateY + cluster.phaseY) * cluster.driftY,
+          radius: cluster.radius * radiusScale,
+          strength: 0.55 + strengthWave * 0.75,
+        };
+      });
+    }
+
+    function getDroneXfadeInfluence(grain, clusterStates) {
+      let influence = 0;
+
+      for (let i = 0; i < clusterStates.length; i += 1) {
+        const cluster = clusterStates[i];
+        const distance = Math.hypot(grain.x - cluster.x, grain.y - cluster.y);
+        if (distance >= cluster.radius) {
+          continue;
+        }
+
+        const gradient = 1 - distance / cluster.radius;
+        const localInfluence =
+          gradient * gradient * cluster.strength * grain.droneXfadeBias;
+        influence = Math.max(influence, localInfluence);
+      }
+
+      return Math.min(influence, 1);
+    }
+
+    function mapSamplePositionToImage(fromImage, toImage, grain, sx, sy) {
+      const fromMaxSx = Math.max(0, fromImage.width - grain.w);
+      const fromMaxSy = Math.max(0, fromImage.height - grain.h);
+      const u = fromMaxSx > 0 ? sx / fromMaxSx : 0.5;
+      const v = fromMaxSy > 0 ? sy / fromMaxSy : 0.5;
+      const toMaxSx = Math.max(0, toImage.width - grain.w);
+      const toMaxSy = Math.max(0, toImage.height - grain.h);
+
+      return {
+        sx: u * toMaxSx,
+        sy: v * toMaxSy,
+      };
+    }
+
+    function registerArpPulse({
+      x = 0.5,
+      y = 0.5,
+      strength = 1.8,
+      radius = 160,
+      duration = 1000,
+    } = {}) {
+      const nowMs = p.millis();
+      const pulseX = x * p.width;
+      const pulseY = y * p.height;
+      activeArpPulses.push({
+        x: pulseX,
+        y: pulseY,
+        strength,
+        radius,
+        duration,
+        createdAt: nowMs,
+      });
+
+      if (activeArpPulses.length > 6) {
+        activeArpPulses.splice(0, activeArpPulses.length - 6);
+      }
+
+      if (!testGrainSheet) {
         return;
       }
 
-      const startSample = randomSamplePosition(w, h);
-      const targetSample = randomSamplePosition(w, h);
-      const morphDuration = randomMorphDuration();
+      for (let i = 0; i < testGrainSheet.length; i += 1) {
+        triggerGrainMotionBurst(testGrainSheet[i], {
+          x: pulseX,
+          y: pulseY,
+          strength,
+          radius,
+        });
+      }
+    }
+    registerArpPulseFn = registerArpPulse;
+
+    function triggerGrainMotionBurst(grain, pulse) {
+      const distance = Math.hypot(grain.x - pulse.x, grain.y - pulse.y);
+      if (distance >= pulse.radius) {
+        return;
+      }
+
+      const proximity = 1 - distance / pulse.radius;
+      const burstStrength = proximity * proximity * pulse.strength;
+      const angle = p.random(Math.PI * 2);
+      const burstDistance = p.random(10, 28) * burstStrength;
+      const impulse = burstDistance * p.random(7, 12);
+
+      grain.motionVelocityX += Math.cos(angle) * impulse;
+      grain.motionVelocityY += Math.sin(angle) * impulse;
+    }
+
+    function updateGrainMotion(grain, dtMs) {
+      const dt = Math.min(dtMs, 80) * 0.001;
+      const spring = 18;
+      const damping = 7.5;
+
+      const accelX = -grain.motionOffsetX * spring - grain.motionVelocityX * damping;
+      const accelY = -grain.motionOffsetY * spring - grain.motionVelocityY * damping;
+
+      grain.motionVelocityX += accelX * dt;
+      grain.motionVelocityY += accelY * dt;
+      grain.motionOffsetX += grain.motionVelocityX * dt;
+      grain.motionOffsetY += grain.motionVelocityY * dt;
+
+      if (
+        Math.abs(grain.motionOffsetX) < 0.02 &&
+        Math.abs(grain.motionOffsetY) < 0.02 &&
+        Math.abs(grain.motionVelocityX) < 0.02 &&
+        Math.abs(grain.motionVelocityY) < 0.02
+      ) {
+        grain.motionOffsetX = 0;
+        grain.motionOffsetY = 0;
+        grain.motionVelocityX = 0;
+        grain.motionVelocityY = 0;
+      }
+    }
+
+    function getGrainArpBoost(grain, nowMs) {
+      let boost = 0;
+
+      for (let i = 0; i < activeArpPulses.length; i += 1) {
+        const pulse = activeArpPulses[i];
+        const age = nowMs - pulse.createdAt;
+
+        if (age < 0 || age >= pulse.duration) {
+          continue;
+        }
+
+        const distance = Math.hypot(grain.x - pulse.x, grain.y - pulse.y);
+        if (distance >= pulse.radius) {
+          continue;
+        }
+
+        const proximity = 1 - distance / pulse.radius;
+        const decay = 1 - age / pulse.duration;
+        boost += pulse.strength * proximity * proximity * decay;
+      }
+
+      return Math.min(boost, 3.5);
+    }
+
+    function randomBlobMorphDuration() {
+      return p.random(1600, 3200);
+    }
+
+    function makeBlobPoints(pointCount = Math.floor(p.random(20, 32))) {
+      const points = [];
+
+      for (let i = 0; i < pointCount; i += 1) {
+        points.push({
+          angle:
+            (i / pointCount) * Math.PI * 2 + p.random(-0.26, 0.26),
+          radiusScale: p.random(0.68, 1.08),
+          wobblePhase: p.random(Math.PI * 2),
+          wobbleRate: p.random(0.08, 0.22) * Math.PI * 2,
+          wobbleDepth: p.random(0.015, 0.055),
+        });
+      }
+
+      points.sort((a, b) => a.angle - b.angle);
+      return points;
+    }
+
+    function setNextBlobTarget(grain) {
+      grain.startBlobPoints = grain.targetBlobPoints.map((point) => ({
+        ...point,
+      }));
+      grain.targetBlobPoints = makeBlobPoints(grain.blobPointCount);
+      grain.blobMorphDuration = randomBlobMorphDuration();
+    }
+
+    function updateGrainBlobMorph(grain, dtMs) {
+      grain.blobMorphProgress += dtMs / grain.blobMorphDuration;
+
+      while (grain.blobMorphProgress >= 1) {
+        grain.blobMorphProgress -= 1;
+        setNextBlobTarget(grain);
+      }
+    }
+
+    function makeGrain(w, h, x, y, rotation) {
+      if (!sourceImages.length) {
+        return;
+      }
+
+      const sourceImage = p.random(sourceImages);
+      const startSample = randomSamplePosition(sourceImage, w, h);
+      const targetSample = randomSamplePosition(sourceImage, w, h);
+      const morphDuration = getMorphDuration(startSample, targetSample);
+      const blobPointCount = Math.floor(p.random(20, 32));
+      const startBlobPoints = makeBlobPoints(blobPointCount);
+      const targetBlobPoints = makeBlobPoints(blobPointCount);
 
       return {
+        sourceImage,
         w,
         h,
         x,
@@ -118,65 +386,292 @@ export function mountSketch(containerEl, onControl, onClick) {
         startSy: startSample.sy,
         targetSx: targetSample.sx,
         targetSy: targetSample.sy,
-        morphStartTime: p.millis() - p.random(0, morphDuration),
         morphDuration,
+        morphProgress: p.random(),
+        alpha: p.random(0.18, 0.38),
+        maskScaleX: p.random(0.72, 0.92),
+        maskScaleY: p.random(0.72, 0.92),
+        pulseRate: p.random(0.16, 0.5) * Math.PI * 2,
+        pulsePhase: p.random(Math.PI * 2),
+        pulseDepth: p.random(0.14, 0.32),
+        warpRateX: p.random(0.18, 0.62) * Math.PI * 2,
+        warpRateY: p.random(0.22, 0.7) * Math.PI * 2,
+        warpPhaseX: p.random(Math.PI * 2),
+        warpPhaseY: p.random(Math.PI * 2),
+        warpDepthX: p.random(0.04, 0.11),
+        warpDepthY: p.random(0.04, 0.11),
+        maskWarpDepthX: p.random(0.03, 0.08),
+        maskWarpDepthY: p.random(0.03, 0.08),
+        audioPulseLift: p.random(0.08, 0.94),
+        arpOverlayColor: p.random([
+          [90, 170, 255],
+          [255, 120, 90],
+          [210, 110, 255],
+        ]),
+        arpOverlayStrength: p.random(0.7, 1.2),
+        secondarySourceImage: droneXfadeImage,
+        droneXfadeInfluence: 0,
+        droneXfadeBias: p.random(0.78, 2.18),
+        blobPointCount,
+        startBlobPoints,
+        targetBlobPoints,
+        blobMorphDuration: randomBlobMorphDuration(),
+        blobMorphProgress: p.random(),
+        motionOffsetX: 0,
+        motionOffsetY: 0,
+        motionVelocityX: 0,
+        motionVelocityY: 0,
       };
     }
 
-    function drawGrain(grain, sx, sy) {
-      if (!grain.rotation) {
-        p.image(
-          sourceImage,
-          grain.x - grain.w * 0.5,
-          grain.y - grain.h * 0.5,
-          grain.w,
-          grain.h,
-          sx,
-          sy,
-          grain.w,
-          grain.h
+    function getGrainDrawState(target, grain, nowMs, audioLevel) {
+      const targetScaleX = target.width / p.width;
+      const targetScaleY = target.height / p.height;
+      const time = nowMs * 0.001;
+      const pulseT =
+        (Math.sin(time * grain.pulseRate + grain.pulsePhase) + 1) * 0.5;
+      const audioPulseLift = audioLevel * grain.audioPulseLift;
+      const pulseMin = 1 - grain.pulseDepth + audioPulseLift;
+      const pulseMax = 1 + grain.pulseDepth + audioPulseLift;
+      const pulse = pulseMin + pulseT * (pulseMax - pulseMin);
+      const warpX =
+        1 + Math.sin(time * grain.warpRateX + grain.warpPhaseX) * grain.warpDepthX;
+      const warpY =
+        1 + Math.sin(time * grain.warpRateY + grain.warpPhaseY) * grain.warpDepthY;
+      const maskWarpX =
+        1 +
+        Math.sin(
+          time * (grain.warpRateX * 0.83) + grain.warpPhaseY * 0.71
+        ) *
+          grain.maskWarpDepthX;
+      const maskWarpY =
+        1 +
+        Math.sin(
+          time * (grain.warpRateY * 0.91) + grain.warpPhaseX * 0.67
+        ) *
+          grain.maskWarpDepthY;
+      return {
+        x: (grain.x + grain.motionOffsetX) * targetScaleX,
+        y: (grain.y + grain.motionOffsetY) * targetScaleY,
+        rotation: grain.rotation,
+        drawW: grain.w * pulse * warpX * targetScaleX,
+        drawH: grain.h * pulse * warpY * targetScaleY,
+        maskW:
+          grain.w * pulse * warpX * targetScaleX * grain.maskScaleX * maskWarpX,
+        maskH:
+          grain.h * pulse * warpY * targetScaleY * grain.maskScaleY * maskWarpY,
+      };
+    }
+
+    function traceBlobPath(ctx, grain, drawState, nowMs) {
+      const time = nowMs * 0.001;
+      const morphT = Math.min(Math.max(grain.blobMorphProgress, 0), 1);
+      const pointCount = Math.min(
+        grain.startBlobPoints?.length ?? 0,
+        grain.targetBlobPoints?.length ?? 0
+      );
+      const points = Array.from({ length: pointCount }, (_, index) => {
+        const startPoint = grain.startBlobPoints[index];
+        const targetPoint = grain.targetBlobPoints[index];
+        const angle =
+          startPoint.angle + (targetPoint.angle - startPoint.angle) * morphT;
+        const radiusBase =
+          startPoint.radiusScale +
+          (targetPoint.radiusScale - startPoint.radiusScale) * morphT;
+        const wobblePhase =
+          startPoint.wobblePhase +
+          (targetPoint.wobblePhase - startPoint.wobblePhase) * morphT;
+        const wobbleRate =
+          startPoint.wobbleRate +
+          (targetPoint.wobbleRate - startPoint.wobbleRate) * morphT;
+        const wobbleDepth =
+          startPoint.wobbleDepth +
+          (targetPoint.wobbleDepth - startPoint.wobbleDepth) * morphT;
+        const wobble =
+          1 +
+          Math.sin(time * wobbleRate + wobblePhase) *
+            wobbleDepth;
+        const radius = radiusBase * wobble;
+
+        return {
+          x: Math.cos(angle) * drawState.maskW * 0.5 * radius,
+          y: Math.sin(angle) * drawState.maskH * 0.5 * radius,
+        };
+      });
+
+      if (!points || points.length < 3) {
+        ctx.ellipse(
+          0,
+          0,
+          drawState.maskW * 0.5,
+          drawState.maskH * 0.5,
+          0,
+          0,
+          Math.PI * 2
         );
         return;
       }
 
-      p.push();
-      p.translate(grain.x, grain.y);
-      p.rotate(grain.rotation);
-      p.image(
-        sourceImage,
-        -grain.w * 0.5,
-        -grain.h * 0.5,
-        grain.w,
-        grain.h,
-        sx,
-        sy,
-        grain.w,
-        grain.h
+      const firstPoint = points[0];
+      const lastPoint = points[points.length - 1];
+      const firstMid = {
+        x: (lastPoint.x + firstPoint.x) * 0.5,
+        y: (lastPoint.y + firstPoint.y) * 0.5,
+      };
+
+      ctx.moveTo(firstMid.x, firstMid.y);
+
+      for (let i = 0; i < points.length; i += 1) {
+        const current = points[i];
+        const next = points[(i + 1) % points.length];
+        const mid = {
+          x: (current.x + next.x) * 0.5,
+          y: (current.y + next.y) * 0.5,
+        };
+
+        ctx.quadraticCurveTo(current.x, current.y, mid.x, mid.y);
+      }
+
+      ctx.closePath();
+    }
+
+    function drawGrain(
+      target,
+      grain,
+      sx,
+      sy,
+      nowMs,
+      audioLevel,
+      arpBoost,
+      droneXfadeMix
+    ) {
+      const ctx = target.drawingContext;
+      const imageSource = grain.sourceImage?.canvas || grain.sourceImage?.elt;
+      const secondaryImageSource =
+        grain.secondarySourceImage?.canvas || grain.secondarySourceImage?.elt;
+
+      if (!imageSource) {
+        return;
+      }
+
+      const drawState = getGrainDrawState(target, grain, nowMs, audioLevel);
+      const crossfadeT = Math.min(
+        1,
+        Math.max(0, droneXfadeMix / Math.max(droneXfadeMaxMix, 0.001))
       );
-      p.pop();
+      const baseAlpha = grain.alpha * (1 - crossfadeT);
+      const secondaryAlpha = grain.alpha * crossfadeT;
+
+      ctx.save();
+      ctx.translate(drawState.x, drawState.y);
+      ctx.rotate(drawState.rotation);
+      ctx.beginPath();
+      traceBlobPath(ctx, grain, drawState, nowMs);
+      ctx.clip();
+      if (baseAlpha > 0.001) {
+        ctx.globalAlpha = baseAlpha;
+        ctx.drawImage(
+          imageSource,
+          sx,
+          sy,
+          grain.w,
+          grain.h,
+          -drawState.drawW * 0.5,
+          -drawState.drawH * 0.5,
+          drawState.drawW,
+          drawState.drawH
+        );
+      }
+
+      if (secondaryAlpha > 0.001 && secondaryImageSource && grain.secondarySourceImage) {
+        const mappedSample = mapSamplePositionToImage(
+          grain.sourceImage,
+          grain.secondarySourceImage,
+          grain,
+          sx,
+          sy
+        );
+        ctx.globalAlpha = secondaryAlpha;
+        ctx.drawImage(
+          secondaryImageSource,
+          mappedSample.sx,
+          mappedSample.sy,
+          grain.w,
+          grain.h,
+          -drawState.drawW * 0.5,
+          -drawState.drawH * 0.5,
+          drawState.drawW,
+          drawState.drawH
+        );
+      }
+
+      if (arpBoost > 0.04) {
+        const overlayAlpha = Math.min(
+          0.18,
+          arpBoost * 0.05 * grain.arpOverlayStrength
+        );
+        const [r, g, b] = grain.arpOverlayColor;
+        ctx.globalCompositeOperation = "lighter";
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${overlayAlpha})`;
+        ctx.fillRect(
+          -drawState.drawW * 0.5,
+          -drawState.drawH * 0.5,
+          drawState.drawW,
+          drawState.drawH
+        );
+      }
+
+      ctx.restore();
     }
 
     function makeGrainSheet(grainSize) {
-      const cols = Math.ceil(p.width / (grainSize / 2));
-      const rows = Math.ceil(p.height / (grainSize / 2));
+      const stepX = grainSize * 0.5;
+      const stepY = grainSize * 0.46;
+      const startX = -grainSize * 0.25;
+      const startY = -grainSize * 0.25;
+      const endX = p.width + grainSize * 0.25;
+      const endY = p.height + grainSize * 0.25;
+      const grains = [];
+      let rowIndex = 0;
 
-      let grains = [];
+      for (let y = startY; y <= endY; y += stepY) {
+        const rowOffset = rowIndex % 2 === 0 ? 0 : stepX * 0.5;
 
-      for (let i = 0; i < cols; i++) {
-        for (let j = 0; j < rows; j++) {
-          const x = i * (grainSize / 2);
-          const y = j * (grainSize / 2);
+        for (let x = startX + rowOffset; x <= endX; x += stepX) {
+          const sizeScale = p.random(0.78, 1.18);
+          const aspect = p.random(0.82, 1.22);
+          const w = grainSize * sizeScale * aspect;
+          const h = grainSize * sizeScale / aspect;
+          const jitterX = p.random(-stepX * 0.22, stepX * 0.22);
+          const jitterY = p.random(-stepY * 0.22, stepY * 0.22);
+          const rotation = p.random(-0.28, 0.28);
+          const grain = makeGrain(w, h, x + jitterX, y + jitterY, rotation);
 
-          const grain = makeGrain(grainSize, grainSize, x, y, 0);
-          grains.push(grain);
+          if (grain) {
+            grains.push(grain);
+          }
         }
+
+        rowIndex += 1;
       }
+
       return grains;
     }
 
     p.setup = async () => {
+      p.pixelDensity(1);
       const canvas = p.createCanvas(800, 500);
       canvasEl = canvas.elt;
+      const bufferWidth = Math.max(1, Math.round(p.width * grainBufferScale));
+      const bufferHeight = Math.max(1, Math.round(p.height * grainBufferScale));
+      grainBuffer = p.createGraphics(bufferWidth, bufferHeight);
+      echoBuffer = p.createGraphics(bufferWidth, bufferHeight);
+      grainBuffer.pixelDensity(1);
+      echoBuffer.pixelDensity(1);
+      grainBuffer.drawingContext.imageSmoothingEnabled = true;
+      echoBuffer.drawingContext.imageSmoothingEnabled = true;
+      grainBuffer.clear();
+      echoBuffer.clear();
       window.addEventListener("pointermove", handlePointerMove);
       cleanupPointerMove = () => {
         window.removeEventListener("pointermove", handlePointerMove);
@@ -186,15 +681,20 @@ export function mountSketch(containerEl, onControl, onClick) {
       //p.noLoop();
 
       try {
-        sourceImage = await p.loadImage(grainImageUrl);
+        const loadedImages = await Promise.all(
+          [...grainImageUrls, droneXfadeImageUrl].map((url) => p.loadImage(url))
+        );
+        sourceImages = loadedImages.slice(0, grainImageUrls.length);
+        droneXfadeImage = loadedImages[loadedImages.length - 1];
       } catch (error) {
-        console.error("Failed to load grain image", error);
+        console.error("Failed to load grain images", error);
       }
 
       lastX = p.mouseX;
       lastY = p.mouseY;
       lastSpeed = 0;
       lastControlTime = performance.now();
+      createDroneXfadeClusters();
       testGrainSheet = makeGrainSheet(200);
       p.redraw();
     };
@@ -226,22 +726,56 @@ export function mountSketch(containerEl, onControl, onClick) {
         return;
       }
       const now = p.millis();
+      const dtMs = lastDrawTimeMs > 0 ? Math.min(now - lastDrawTimeMs, 80) : 16.67;
+      lastDrawTimeMs = now;
+      const rawAudioLevel = getAudioLevel ? getAudioLevel() : 0;
+      const targetAudioLevel = Math.min(
+        1,
+        Math.pow(Math.max(0, rawAudioLevel), 0.55) * 1.2
+      );
+      const rawDrone2Level = getDrone2Level ? getDrone2Level() : 0;
+      const targetDrone2Level = Math.min(
+        1,
+        Math.pow(Math.max(0, rawDrone2Level), 0.45) * 2.0
+      );
+      smoothedAudioLevel += (targetAudioLevel - smoothedAudioLevel) * 0.12;
+      smoothedDrone2Level += (targetDrone2Level - smoothedDrone2Level) * 0.09;
+      for (let i = activeArpPulses.length - 1; i >= 0; i -= 1) {
+        if (now - activeArpPulses[i].createdAt >= activeArpPulses[i].duration) {
+          activeArpPulses.splice(i, 1);
+        }
+      }
+      const droneXfadeClusterStates = getDroneXfadeClusterStates(now);
+      echoFrameCounter += 1;
+      const shouldRefreshEcho = echoFrameCounter % echoFrameStride === 0;
 
-      p.blendMode(p.ADD);
-      p.tint(255, 80);
+      grainBuffer.clear();
+      grainBuffer.blendMode(p.EXCLUSION);
+      echoBuffer.blendMode(p.BLEND);
+      echoBuffer.noStroke();
+      echoBuffer.fill(0, 0, 0, echoFadeAlpha);
+      echoBuffer.rect(0, 0, echoBuffer.width, echoBuffer.height);
 
       for (let i = 0; i < testGrainSheet.length; i += 1) {
         const grain = testGrainSheet[i];
-        let t = (now - grain.morphStartTime) / grain.morphDuration;
+        updateGrainMotion(grain, dtMs);
+        updateGrainBlobMorph(grain, dtMs);
+        const arpBoost = getGrainArpBoost(grain, now);
+        grain.droneXfadeInfluence = getDroneXfadeInfluence(
+          grain,
+          droneXfadeClusterStates
+        );
+        const morphRate = 1 + arpBoost;
+        grain.morphProgress += (dtMs / grain.morphDuration) * morphRate;
 
-        if (t >= 1) {
-          setNextGrainTarget(grain, now);
-          t = 0;
+        while (grain.morphProgress >= 1) {
+          grain.morphProgress -= 1;
+          setNextGrainTarget(grain);
         }
 
-        const morphAmount = Math.min(Math.max(t, 0), 1);
-        const maxSx = Math.max(0, sourceImage.width - grain.w);
-        const maxSy = Math.max(0, sourceImage.height - grain.h);
+        const morphAmount = Math.min(Math.max(grain.morphProgress, 0), 1);
+        const maxSx = Math.max(0, grain.sourceImage.width - grain.w);
+        const maxSy = Math.max(0, grain.sourceImage.height - grain.h);
         const sx = Math.min(
           maxSx,
           Math.max(
@@ -257,10 +791,47 @@ export function mountSketch(containerEl, onControl, onClick) {
           )
         );
 
-        // drawGrain(grain, sx, sy);
+        const droneXfadeMix =
+          grain.droneXfadeInfluence * smoothedDrone2Level;
+        drawGrain(
+          grainBuffer,
+          grain,
+          sx,
+          sy,
+          now,
+          smoothedAudioLevel,
+          arpBoost,
+          droneXfadeMix
+        );
       }
 
-      p.noTint();
+      grainBuffer.blendMode(p.BLEND);
+
+      {
+        const echoCtx = echoBuffer.drawingContext;
+        const grainImage = grainBuffer.canvas || grainBuffer.elt;
+
+        if (shouldRefreshEcho) {
+          echoCtx.save();
+          echoCtx.globalAlpha = echoMixAlpha;
+          echoCtx.globalCompositeOperation = "lighter";
+          echoCtx.drawImage(grainImage, 0, 0, echoBuffer.width, echoBuffer.height);
+          echoCtx.restore();
+        }
+      }
+
+      {
+        const mainCtx = p.drawingContext;
+        mainCtx.save();
+        mainCtx.imageSmoothingEnabled = true;
+        mainCtx.filter = `blur(${echoBlurPx}px)`;
+        p.image(echoBuffer, 0, 0, p.width, p.height);
+        mainCtx.filter = `blur(${grainBlurPx}px)`;
+        p.image(grainBuffer, 0, 0, p.width, p.height);
+        mainCtx.filter = "none";
+        mainCtx.restore();
+      }
+
       p.blendMode(p.BLEND);
     };
 
@@ -273,6 +844,10 @@ export function mountSketch(containerEl, onControl, onClick) {
       }
     };
   }, containerEl);
+
+  instance.registerArpPulse = (pulse) => {
+    registerArpPulseFn(pulse);
+  };
 
   const remove = instance.remove.bind(instance);
   instance.remove = () => {

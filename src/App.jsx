@@ -115,35 +115,54 @@ function App() {
   useEffect(() => {
     if (!p5ContainerRef.current) return;
 
-    const instance = mountSketch(p5ContainerRef.current, (ctl) => {
-      const controlStart = performance.now();
-      frameCountRef.current += 1;
+    let instance = null;
 
-      if (!hasLoggedMovementControlRef.current && ctl.rawSpeed > 0) {
-        hasLoggedMovementControlRef.current = true;
-        // console.log("movement control", {
-        //   source: ctl.source,
-        //   rawSpeed: ctl.rawSpeed,
-        //   speedPxPerSecond: ctl.speedPxPerSecond,
-        //   speed: ctl.speed,
-        // });
-      }
+    instance = mountSketch(
+      p5ContainerRef.current,
+      (ctl) => {
+        const controlStart = performance.now();
+        frameCountRef.current += 1;
 
-      engineRef.current?.updateLeadGesture?.(ctl);
-      engineRef.current?.triggerArpGesture?.(ctl);
+        if (!hasLoggedMovementControlRef.current && ctl.rawSpeed > 0) {
+          hasLoggedMovementControlRef.current = true;
+          // console.log("movement control", {
+          //   source: ctl.source,
+          //   rawSpeed: ctl.rawSpeed,
+          //   speedPxPerSecond: ctl.speedPxPerSecond,
+          //   speed: ctl.speed,
+          // });
+        }
 
-      const controlDuration = performance.now() - controlStart;
-      controlAvgMsRef.current = lerp(
-        controlAvgMsRef.current,
-        controlDuration,
-        0.1
-      );
-      controlPeakMsRef.current = Math.max(
-        controlPeakMsRef.current,
-        controlDuration
-      );
-    }, () => {}
-  );
+        engineRef.current?.updateLeadGesture?.(ctl);
+        const arpNotes = engineRef.current?.triggerArpGesture?.(ctl);
+        if (arpNotes) {
+          instance?.registerArpPulse?.({
+            x: ctl.x,
+            y: ctl.y,
+            strength: Math.min(
+              3.2,
+              1.2 + arpNotes.length * 0.16 + ctl.speed * 1.4
+            ),
+            radius: Math.min(260, 120 + arpNotes.length * 10 + ctl.speed * 90),
+            duration: 700 + arpNotes.length * 55,
+          });
+        }
+
+        const controlDuration = performance.now() - controlStart;
+        controlAvgMsRef.current = lerp(
+          controlAvgMsRef.current,
+          controlDuration,
+          0.1
+        );
+        controlPeakMsRef.current = Math.max(
+          controlPeakMsRef.current,
+          controlDuration
+        );
+      },
+      () => {},
+      () => engineRef.current?.getVisualLevel?.() ?? 0,
+      () => engineRef.current?.getDrone2VisualLevel?.() ?? 0
+    );
 
     return () => {
       instance.remove(); // important: cleanup p5 on unmount

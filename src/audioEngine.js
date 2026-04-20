@@ -33,11 +33,33 @@ export function createEngine() {
         audioCallbackPeakMs: 0,
     };
 
+    const visualLevelTap = new Tone.Gain(1.0);
+    const visualMeter = new Tone.Meter({
+        normalRange: true,
+        smoothing: 0.82,
+    });
+    visualLevelTap.connect(visualMeter);
+    const drone2VisualTap = new Tone.Gain(1.0);
+    const drone2VisualMeter = new Tone.Meter({
+        normalRange: true,
+        smoothing: 0.86,
+    });
+    drone2VisualTap.connect(drone2VisualMeter);
+    const droneMidCut = new Tone.EQ3({
+        low: 0,
+        mid: -5,
+        high: 0,
+        lowFrequency: 200,
+        highFrequency: 300,
+    });
     const droneReverbSend = new Tone.Gain(0.4);
     const droneReverb = new Tone.Reverb({
         decay: 6,
         wet: 1.0,
     });
+    droneMidCut.connect(droneReverbSend);
+    droneMidCut.connect(visualLevelTap);
+    droneMidCut.toDestination();
     droneReverbSend.connect(droneReverb);
     droneReverb.toDestination();
 
@@ -267,8 +289,7 @@ export function createEngine() {
         gain.connect(fbDelay);
         gain.connect(limiter);
         fbDelay.connect(limiter);
-        limiter.connect(droneReverbSend);
-        limiter.toDestination();
+        limiter.connect(droneMidCut);
 
         /* ================= API ================= */
 
@@ -564,6 +585,7 @@ export function createEngine() {
         comb.connect(limiter);
         // delay.connect(limiter);
         limiter.connect(panner);
+        panner.connect(visualLevelTap);
         panner.toDestination();
 
         return {
@@ -787,6 +809,9 @@ export function createEngine() {
         gain.connect(fbDelWet);
         gain.connect(delSendGain);
         delSendGain.connect(clickDelay);
+        gain.connect(visualLevelTap);
+        fbDelWet.connect(visualLevelTap);
+        clickDelay.connect(visualLevelTap);
         fbDelWet.toDestination();
         clickDelay.toDestination();
         gain.toDestination();
@@ -1145,6 +1170,7 @@ export function createEngine() {
         gainMax: 0.5,
         morphTarget: [0.1, 1.0, 0.7, 0.35, 0.18, 0.09, 0.04, 0.02],
     });
+    voice2.limiter.connect(drone2VisualTap);
   
 
 
@@ -1752,6 +1778,11 @@ export function createEngine() {
         arpVoice.dispose();
         leadVoice.dispose();
         voices.forEach((voice) => voice.dispose());
+        drone2VisualMeter.dispose();
+        drone2VisualTap.dispose();
+        visualMeter.dispose();
+        visualLevelTap.dispose();
+        droneMidCut.dispose();
         droneReverbSend.dispose();
         droneReverb.dispose();
         pitchSlideLoop.dispose();
@@ -1893,6 +1924,16 @@ export function createEngine() {
         playArpRun,
         triggerArpGesture,
         updateLeadGesture,
+        getVisualLevel() {
+            const meterValue = visualMeter.getValue();
+            const level = Array.isArray(meterValue) ? meterValue[0] : meterValue;
+            return Number.isFinite(level) ? clamp(level, 0, 1) : 0;
+        },
+        getDrone2VisualLevel() {
+            const meterValue = drone2VisualMeter.getValue();
+            const level = Array.isArray(meterValue) ? meterValue[0] : meterValue;
+            return Number.isFinite(level) ? clamp(level, 0, 1) : 0;
+        },
         getPerfStats() {
             return { ...perfStats };
         },
