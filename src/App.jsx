@@ -159,7 +159,9 @@ function App() {
           controlDuration
         );
       },
-      () => {},
+      (ctl) => {
+        engineRef.current?.triggerPercClickGate?.(ctl);
+      },
       () => engineRef.current?.getVisualLevel?.() ?? 0,
       () => engineRef.current?.getDrone2VisualLevel?.() ?? 0
     );

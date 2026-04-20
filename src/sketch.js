@@ -750,7 +750,7 @@ export function mountSketch(
       const shouldRefreshEcho = echoFrameCounter % echoFrameStride === 0;
 
       grainBuffer.clear();
-      grainBuffer.blendMode(p.EXCLUSION);
+      grainBuffer.blendMode(p.BURN);
       echoBuffer.blendMode(p.BLEND);
       echoBuffer.noStroke();
       echoBuffer.fill(0, 0, 0, echoFadeAlpha);
@@ -835,13 +835,21 @@ export function mountSketch(
       p.blendMode(p.BLEND);
     };
 
-    p.mouseClicked = () => {
-      if (onClick) {
-        onClick({
-          x: Math.abs(p.mouseX / p.width),
-          y: Math.abs(p.mouseY / p.height),
-        });
+    p.mousePressed = () => {
+      const pointerInCanvas =
+        p.mouseX >= 0 &&
+        p.mouseX <= p.width &&
+        p.mouseY >= 0 &&
+        p.mouseY <= p.height;
+
+      if (!pointerInCanvas || !onClick) {
+        return;
       }
+
+      onClick({
+        x: Math.abs(p.mouseX / p.width),
+        y: Math.abs(p.mouseY / p.height),
+      });
     };
   }, containerEl);
 

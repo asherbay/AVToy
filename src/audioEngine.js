@@ -52,14 +52,16 @@ export function createEngine() {
         lowFrequency: 200,
         highFrequency: 300,
     });
+    const droneKickDuckGain = new Tone.Gain(1.0);
     const droneReverbSend = new Tone.Gain(0.4);
     const droneReverb = new Tone.Reverb({
         decay: 6,
         wet: 1.0,
     });
-    droneMidCut.connect(droneReverbSend);
-    droneMidCut.connect(visualLevelTap);
-    droneMidCut.toDestination();
+    droneMidCut.connect(droneKickDuckGain);
+    droneKickDuckGain.connect(droneReverbSend);
+    droneKickDuckGain.connect(visualLevelTap);
+    droneKickDuckGain.toDestination();
     droneReverbSend.connect(droneReverb);
     droneReverb.toDestination();
 
@@ -1007,6 +1009,473 @@ export function createEngine() {
         };
     }
 
+    function perc({
+        membraneEnvelope = {
+            attack: 0.001,
+            decay: 0.32,
+            sustain: 0.0,
+            release: 0.48,
+        },
+        membraneOctaves = 6.5,
+        membranePitchDecay = 0.045,
+        membraneFilterFrequency = 140,
+        membraneFilterQ = 1.2,
+        membraneFilterType = "lowpass",
+        membraneFilterEnv = {
+            attack: 0.001,
+            decay: 0.14,
+            sustain: 0.0,
+            release: 0.18,
+            min: 90,
+            max: 1800,
+        },
+        membraneGainLevel = 0.95,
+
+        metalEnvelope = {
+            attack: 0.001,
+            decay: 0.22,
+            release: 0.14,
+        },
+        metalHarmonicity = 5.1,
+        metalModulationIndex = 26,
+        metalOctaves = 1.9,
+        metalResonance = 4600,
+        metalFilterFrequency = 5200,
+        metalFilterQ = 0.8,
+        metalFilterType = "highpass",
+        metalFilterEnv = {
+            attack: 0.001,
+            decay: 0.11,
+            sustain: 0.0,
+            release: 0.09,
+            min: 2400,
+            max: 9800,
+        },
+        metalGainLevel = 0.48,
+
+        noiseEnvelope = {
+            attack: 0.001,
+            decay: 0.12,
+            sustain: 0.0,
+            release: 0.08,
+        },
+        noiseType = "white",
+        noiseFilterFrequency = 2400,
+        noiseFilterQ = 1.2,
+        noiseFilterType = "bandpass",
+        noiseFilterEnv = {
+            attack: 0.001,
+            decay: 0.08,
+            sustain: 0.0,
+            release: 0.06,
+            min: 900,
+            max: 7600,
+        },
+        noiseGainLevel = 0.4,
+
+        distortionAmount = 0.18,
+        distortionWet = 0.35,
+        frequencyShift = 0,
+        frequencyShiftWet = 0.28,
+        reverbSendLevel = 0.16,
+        outputGainLevel = 0.75,
+        limiterThreshold = -4,
+    } = {}) {
+        function setEnvelopeSettings(envelope, settings = {}) {
+            if (settings.attack != null) {
+                envelope.attack = settings.attack;
+            }
+            if (settings.decay != null) {
+                envelope.decay = settings.decay;
+            }
+            if (settings.sustain != null) {
+                envelope.sustain = settings.sustain;
+            }
+            if (settings.release != null) {
+                envelope.release = settings.release;
+            }
+        }
+
+        function setFilterEnvelopeSettings(envelope, scale, settings = {}) {
+            const nextMin = settings.min ?? scale.min;
+            const nextMax = settings.max ?? scale.max;
+            const safeMin = Math.max(20, Math.min(nextMin, nextMax));
+            const safeMax = Math.max(safeMin, Math.max(nextMin, nextMax));
+
+            setEnvelopeSettings(envelope, settings);
+            scale.min = safeMin;
+            scale.max = safeMax;
+        }
+
+        function setFilterBaseFrequency(filter, scale, value) {
+            const safeValue = Math.max(20, value);
+            scale.min = safeValue;
+            if (scale.max < safeValue) {
+                scale.max = safeValue;
+            }
+            filter.frequency.value = safeValue;
+        }
+
+        function setFilterType(filter, value) {
+            filter.type = value;
+        }
+
+        const membrane = new Tone.MembraneSynth({
+            envelope: membraneEnvelope,
+            octaves: membraneOctaves,
+            pitchDecay: membranePitchDecay,
+        });
+        const membraneFilter = new Tone.Filter({
+            frequency: membraneFilterFrequency,
+            Q: membraneFilterQ,
+            type: membraneFilterType,
+        });
+        const membraneFilterEnvelope = new Tone.Envelope({
+            attack: membraneFilterEnv.attack,
+            decay: membraneFilterEnv.decay,
+            sustain: membraneFilterEnv.sustain,
+            release: membraneFilterEnv.release,
+        });
+        const membraneFilterEnvScale = new Tone.Scale(
+            membraneFilterEnv.min,
+            membraneFilterEnv.max
+        );
+        membraneFilterEnvelope.connect(membraneFilterEnvScale);
+        membraneFilterEnvScale.connect(membraneFilter.frequency);
+        const membraneGain = new Tone.Gain(membraneGainLevel);
+
+        const metal = new Tone.MetalSynth({
+            envelope: metalEnvelope,
+            harmonicity: metalHarmonicity,
+            modulationIndex: metalModulationIndex,
+            octaves: metalOctaves,
+            resonance: metalResonance,
+        });
+        const metalFilter = new Tone.Filter({
+            frequency: metalFilterFrequency,
+            Q: metalFilterQ,
+            type: metalFilterType,
+        });
+        const metalFilterEnvelope = new Tone.Envelope({
+            attack: metalFilterEnv.attack,
+            decay: metalFilterEnv.decay,
+            sustain: metalFilterEnv.sustain,
+            release: metalFilterEnv.release,
+        });
+        const metalFilterEnvScale = new Tone.Scale(
+            metalFilterEnv.min,
+            metalFilterEnv.max
+        );
+        metalFilterEnvelope.connect(metalFilterEnvScale);
+        metalFilterEnvScale.connect(metalFilter.frequency);
+        const metalGain = new Tone.Gain(metalGainLevel);
+
+        const noise = new Tone.NoiseSynth({
+            envelope: noiseEnvelope,
+            noise: {
+                type: noiseType,
+            },
+        });
+        const noiseFilter = new Tone.Filter({
+            frequency: noiseFilterFrequency,
+            Q: noiseFilterQ,
+            type: noiseFilterType,
+        });
+        const noiseFilterEnvelope = new Tone.Envelope({
+            attack: noiseFilterEnv.attack,
+            decay: noiseFilterEnv.decay,
+            sustain: noiseFilterEnv.sustain,
+            release: noiseFilterEnv.release,
+        });
+        const noiseFilterEnvScale = new Tone.Scale(
+            noiseFilterEnv.min,
+            noiseFilterEnv.max
+        );
+        noiseFilterEnvelope.connect(noiseFilterEnvScale);
+        noiseFilterEnvScale.connect(noiseFilter.frequency);
+        const noiseGain = new Tone.Gain(noiseGainLevel);
+
+        const sourceBus = new Tone.Gain(1.0);
+        const distortion = new Tone.Distortion(distortionAmount);
+        distortion.wet.value = distortionWet;
+        const frequencyShifter = new Tone.FrequencyShifter({
+            frequency: frequencyShift,
+        });
+        frequencyShifter.wet.value = frequencyShiftWet;
+        const outputGain = new Tone.Gain(outputGainLevel);
+        const reverbSend = new Tone.Gain(reverbSendLevel);
+        const limiter = new Tone.Limiter(limiterThreshold);
+
+        membrane.connect(membraneFilter);
+        membraneFilter.connect(membraneGain);
+        membraneGain.connect(sourceBus);
+
+        metal.connect(metalFilter);
+        metalFilter.connect(metalGain);
+        metalGain.connect(sourceBus);
+
+        noise.connect(noiseFilter);
+        noiseFilter.connect(noiseGain);
+        noiseGain.connect(sourceBus);
+
+        sourceBus.connect(distortion);
+        distortion.connect(frequencyShifter);
+        frequencyShifter.connect(outputGain);
+        outputGain.connect(limiter);
+        limiter.connect(reverbSend);
+        reverbSend.connect(droneReverb);
+        limiter.connect(visualLevelTap);
+        limiter.toDestination();
+
+        return {
+            membrane,
+            membraneFilter,
+            membraneFilterEnvelope,
+            membraneFilterEnvScale,
+            membraneGain,
+            metal,
+            metalFilter,
+            metalFilterEnvelope,
+            metalFilterEnvScale,
+            metalGain,
+            noise,
+            noiseFilter,
+            noiseFilterEnvelope,
+            noiseFilterEnvScale,
+            noiseGain,
+            sourceBus,
+            distortion,
+            frequencyShifter,
+            outputGain,
+            reverbSend,
+            limiter,
+
+            setMembraneEnvelope(settings = {}) {
+                setEnvelopeSettings(membrane.envelope, settings);
+            },
+
+            setMembraneOctaves(value) {
+                membrane.octaves = value;
+            },
+
+            setMembranePitchDecay(value) {
+                membrane.pitchDecay = value;
+            },
+
+            setMembraneFilterFrequency(value) {
+                setFilterBaseFrequency(
+                    membraneFilter,
+                    membraneFilterEnvScale,
+                    value
+                );
+            },
+
+            setMembraneFilterQ(value, rampTime = 0) {
+                rampTime > 0
+                    ? membraneFilter.Q.rampTo(value, rampTime)
+                    : membraneFilter.Q.value = value;
+            },
+
+            setMembraneFilterType(value) {
+                setFilterType(membraneFilter, value);
+            },
+
+            setMembraneFilterEnvelope(settings = {}) {
+                setFilterEnvelopeSettings(
+                    membraneFilterEnvelope,
+                    membraneFilterEnvScale,
+                    settings
+                );
+            },
+
+            setMembraneGainLevel(value, rampTime = 0) {
+                rampTime > 0
+                    ? membraneGain.gain.rampTo(value, rampTime)
+                    : membraneGain.gain.value = value;
+            },
+
+            setMetalEnvelope(settings = {}) {
+                setEnvelopeSettings(metal.envelope, settings);
+            },
+
+            setMetalHarmonicity(value) {
+                metal.harmonicity = value;
+            },
+
+            setMetalModulationIndex(value) {
+                metal.modulationIndex = value;
+            },
+
+            setMetalOctaves(value) {
+                metal.octaves = value;
+            },
+
+            setMetalResonance(value) {
+                metal.resonance = value;
+            },
+
+            setMetalFilterFrequency(value) {
+                setFilterBaseFrequency(metalFilter, metalFilterEnvScale, value);
+            },
+
+            setMetalFilterQ(value, rampTime = 0) {
+                rampTime > 0
+                    ? metalFilter.Q.rampTo(value, rampTime)
+                    : metalFilter.Q.value = value;
+            },
+
+            setMetalFilterType(value) {
+                setFilterType(metalFilter, value);
+            },
+
+            setMetalFilterEnvelope(settings = {}) {
+                setFilterEnvelopeSettings(
+                    metalFilterEnvelope,
+                    metalFilterEnvScale,
+                    settings
+                );
+            },
+
+            setMetalGainLevel(value, rampTime = 0) {
+                rampTime > 0
+                    ? metalGain.gain.rampTo(value, rampTime)
+                    : metalGain.gain.value = value;
+            },
+
+            setNoiseEnvelope(settings = {}) {
+                setEnvelopeSettings(noise.envelope, settings);
+            },
+
+            setNoiseType(value) {
+                noise.noise.type = value;
+            },
+
+            setNoiseFilterFrequency(value) {
+                setFilterBaseFrequency(noiseFilter, noiseFilterEnvScale, value);
+            },
+
+            setNoiseFilterQ(value, rampTime = 0) {
+                rampTime > 0
+                    ? noiseFilter.Q.rampTo(value, rampTime)
+                    : noiseFilter.Q.value = value;
+            },
+
+            setNoiseFilterType(value) {
+                setFilterType(noiseFilter, value);
+            },
+
+            setNoiseFilterEnvelope(settings = {}) {
+                setFilterEnvelopeSettings(
+                    noiseFilterEnvelope,
+                    noiseFilterEnvScale,
+                    settings
+                );
+            },
+
+            setNoiseGainLevel(value, rampTime = 0) {
+                rampTime > 0
+                    ? noiseGain.gain.rampTo(value, rampTime)
+                    : noiseGain.gain.value = value;
+            },
+
+            setDistortionAmount(value) {
+                distortion.distortion = clamp(value, 0, 1);
+            },
+
+            setDistortionWet(value, rampTime = 0) {
+                rampTime > 0
+                    ? distortion.wet.rampTo(clamp(value, 0, 1), rampTime)
+                    : distortion.wet.value = clamp(value, 0, 1);
+            },
+
+            setFrequencyShift(value, rampTime = 0) {
+                rampTime > 0
+                    ? frequencyShifter.frequency.rampTo(value, rampTime)
+                    : frequencyShifter.frequency.value = value;
+            },
+
+            setFrequencyShiftWet(value, rampTime = 0) {
+                rampTime > 0
+                    ? frequencyShifter.wet.rampTo(clamp(value, 0, 1), rampTime)
+                    : frequencyShifter.wet.value = clamp(value, 0, 1);
+            },
+
+            setOutputGainLevel(value, rampTime = 0) {
+                rampTime > 0
+                    ? outputGain.gain.rampTo(value, rampTime)
+                    : outputGain.gain.value = value;
+            },
+
+            setReverbSendLevel(value, rampTime = 0) {
+                const safeValue = Math.max(0, value);
+                rampTime > 0
+                    ? reverbSend.gain.rampTo(safeValue, rampTime)
+                    : reverbSend.gain.value = safeValue;
+            },
+
+            triggerMembrane(
+                note = "C1",
+                duration = 0.18,
+                time = Tone.now(),
+                velocity = 1
+            ) {
+                membraneFilterEnvelope.triggerAttackRelease(duration, time, velocity);
+                membrane.triggerAttackRelease(note, duration, time, velocity);
+            },
+
+            triggerMetal(
+                note = "C4",
+                duration = 0.12,
+                time = Tone.now(),
+                velocity = 1
+            ) {
+                metalFilterEnvelope.triggerAttackRelease(duration, time, velocity);
+                metal.triggerAttackRelease(note, duration, time, velocity);
+            },
+
+            triggerNoise(
+                duration = 0.08,
+                time = Tone.now(),
+                velocity = 1
+            ) {
+                noiseFilterEnvelope.triggerAttackRelease(duration, time, velocity);
+                noise.triggerAttackRelease(duration, time, velocity);
+            },
+
+            start() {},
+
+            stop(time = Tone.now()) {
+                membrane.triggerRelease(time);
+                metal.triggerRelease(time);
+                noise.triggerRelease(time);
+            },
+
+            dispose() {
+                membrane.dispose();
+                membraneFilter.dispose();
+                membraneFilterEnvelope.dispose();
+                membraneFilterEnvScale.dispose();
+                membraneGain.dispose();
+                metal.dispose();
+                metalFilter.dispose();
+                metalFilterEnvelope.dispose();
+                metalFilterEnvScale.dispose();
+                metalGain.dispose();
+                noise.dispose();
+                noiseFilter.dispose();
+                noiseFilterEnvelope.dispose();
+                noiseFilterEnvScale.dispose();
+                noiseGain.dispose();
+                sourceBus.dispose();
+                distortion.dispose();
+                frequencyShifter.dispose();
+                outputGain.dispose();
+                reverbSend.dispose();
+                limiter.dispose();
+            },
+        };
+    }
+
     function generateChordPair(){
         let c1BassNote = Math.floor(randomInRange(41, 52))
         let c1Note2 = c1BassNote + Math.floor(randomInRange(2, 10)) + Math.floor(randomInRange(0, 2)) * 12
@@ -1115,6 +1584,27 @@ export function createEngine() {
         applyChordPair(harmonyShiftState.originalChordPair, duration);
     }
 
+    function triggerDroneKickDuck(
+        depth = 0.05,
+        attackTime = 0.035,
+        releaseTime = 0.9
+    ) {
+        const now = Tone.now();
+        const target = clamp(depth, 0.05, 1.0);
+        const currentValue = droneKickDuckGain.gain.value;
+
+        droneKickDuckGain.gain.cancelScheduledValues(now);
+        droneKickDuckGain.gain.setValueAtTime(currentValue, now);
+        droneKickDuckGain.gain.linearRampToValueAtTime(
+            target,
+            now + Math.max(0.001, attackTime)
+        );
+        droneKickDuckGain.gain.linearRampToValueAtTime(
+            1.0,
+            now + Math.max(0.001, attackTime) + Math.max(0.001, releaseTime)
+        );
+    }
+
     const systemStateMaintenanceLoop = new Tone.Loop(() => {
         updateSystemState(Tone.now(), 0, 0);
         updateDronePartialMorphSwells(Tone.now());
@@ -1205,6 +1695,325 @@ export function createEngine() {
         reverbWet: 0.44,
         reverbDecay: 10,
     });
+    let percVoice = null;
+    const percClickGateState = {
+        clickTimes: [],
+        gateOpenUntil: 0,
+        openWindowSeconds: 1.5,
+        requiredClicks: 3,
+        holdSeconds: 2.0,
+    };
+
+    function ensurePercVoice() {
+        if (!percVoice) {
+            percVoice = perc();
+        }
+        return percVoice;
+    }
+
+    function triggerPercClickTest({ x = 0.5, y = 0.5 } = {}) {
+        const contextIsRunning = Tone.getContext().rawContext.state === "running";
+
+        if (!isStarted && !contextIsRunning) {
+            return false;
+        }
+
+        const voice = ensurePercVoice();
+        const time = Tone.now() + 0.005;
+        // const preset = "kick"
+        // const preset = "snare"
+        const preset = randomItem([
+            "kick",
+            "snare",
+            "hat",
+            "clang",
+            "thud",
+        ]);
+        const lateral = clamp(x, 0, 1);
+        const vertical = clamp(y, 0, 1);
+
+        if (preset === "kick") {
+            voice.setMembraneGainLevel(0.65);
+            voice.setMembraneEnvelope({
+                attack: 0.001,
+                decay: 0.34,
+                sustain: 0.0,
+                release: 0.46,
+            });
+            voice.setMembraneOctaves(lerp(vertical, 0, 1, 7.6, 5.6));
+            voice.setMembranePitchDecay(lerp(vertical, 0, 1, 0.038, 0.06));
+            voice.setMembraneFilterType("lowpass");
+            voice.setMembraneFilterFrequency(lerp(vertical, 0, 1, 170, 110));
+            voice.setMembraneFilterQ(1.1);
+            voice.setMembraneFilterEnvelope({
+                attack: 0.001,
+                decay: 0.12,
+                sustain: 0.0,
+                release: 0.14,
+                min: 95,
+                max: 1600,
+            });
+            voice.setNoiseGainLevel(0.08);
+            voice.setNoiseType("white");
+            voice.setNoiseFilterType("highpass");
+            voice.setNoiseFilterFrequency(2200);
+            voice.setNoiseFilterQ(0.8);
+            voice.setNoiseFilterEnvelope({
+                attack: 0.001,
+                decay: 0.04,
+                sustain: 0.0,
+                release: 0.04,
+                min: 1800,
+                max: 5200,
+            });
+            voice.setMetalGainLevel(0.0);
+            voice.setDistortionAmount(0.12);
+            voice.setDistortionWet(0.18);
+            voice.setFrequencyShift(0);
+            voice.setFrequencyShiftWet(0.0);
+            voice.setOutputGainLevel(0.48);
+            voice.triggerMembrane("C1", 0.22, time, 0.98);
+            voice.triggerNoise(0.03, time, 0.45);
+            triggerDroneKickDuck(0.19, 0.098, randomInRange(0.5, 1.));
+            return preset;
+        }
+
+        if (preset === "snare") {
+            voice.setMembraneGainLevel(systemState.engagement >= 0.3 ? randomInRange(0.8, 1.45) : 0.28);
+            voice.setMembraneEnvelope({
+                attack: 0.001,
+                decay: systemState.engagement >= 0.3 ? randomInRange(0.3, 0.45) : 0.08,
+                sustain: 0.0,
+                release: 0.18,
+            });
+            voice.setMembraneOctaves(systemState.engagement >= 0.3 ? randomInRange(6, 9) : 4.2);
+            voice.setMembranePitchDecay(0.02);
+            voice.setMembraneFilterType("bandpass");
+            voice.setMembraneFilterFrequency(240);
+            voice.setMembraneFilterQ(1.6);
+            voice.setMembraneFilterEnvelope({
+                attack: 0.001,
+                decay: systemState.engagement >= 0.3 ? randomInRange(0.1, 0.25) : 0.08,
+                sustain: 0.0,
+                release: 0.1,
+                min: 150,
+                max: 1200,
+            });
+            voice.setNoiseGainLevel(0.42);
+            voice.setNoiseType(randomItem(["white", "pink"]));
+            voice.setNoiseEnvelope({
+                attack: 0.001,
+                decay: 0.91,
+                sustain: 0.0,
+                release: 0.07 * (systemState.engagement * 2.0) + 0.03,
+            });
+            voice.setNoiseFilterType("bandpass");
+            voice.setNoiseFilterFrequency(lerp(vertical, 0, 1, 3200, 1800));
+            voice.setNoiseFilterQ(1.4);
+            voice.setNoiseFilterEnvelope({
+                attack: 0.001,
+                decay: systemState.engagement >= 0.3 ? randomInRange(0.1, 0.25) : 0.08,
+                sustain: 0.0,
+                release: 0.06,
+                min: 500,
+                max: 3000,
+            });
+            voice.setMetalGainLevel(0.1);
+            voice.setMetalHarmonicity(4.4);
+            voice.setMetalModulationIndex(18);
+            voice.setMetalOctaves(1.3);
+            voice.setMetalResonance(4200);
+            voice.setMetalFilterType("highpass");
+            voice.setMetalFilterFrequency(4200);
+            voice.setMetalFilterQ(0.7);
+            voice.setMetalFilterEnvelope({
+                attack: 0.001,
+                decay: 0.06,
+                sustain: 0.0,
+                release: 0.05,
+                min: 2600,
+                max: 7600,
+            });
+            voice.setDistortionAmount(systemState.engagement >= 0.3 ? randomInRange(0.5, 0.9) : 0.22);
+            voice.setDistortionWet(0.28);
+            voice.setFrequencyShift(lerp(lateral, 0, 1, -60, 60));
+            voice.setFrequencyShiftWet(0.1);
+            voice.setOutputGainLevel(0.26);
+            voice.triggerMembrane("D2", randomInRange(0.1, 0.3), time, 0.55);
+            voice.triggerNoise(systemState.engagement >= 0.3 ? randomInRange(0.3, 1.15) : 0.08, time, 0.95);
+            voice.triggerMetal("C5", 0.04, time, 0.28);
+            return preset;
+        }
+
+        if (preset === "hat") {
+            voice.setMembraneGainLevel(0.0);
+            voice.setNoiseGainLevel(0.42);
+            voice.setNoiseType(randomItem(["white", "pink"]));
+            voice.setNoiseEnvelope({
+                attack: 0.001,
+                decay: 0.045,
+                sustain: 0.0,
+                release: 0.03,
+            });
+            voice.setNoiseFilterType("highpass");
+            voice.setNoiseFilterFrequency(5200);
+            voice.setNoiseFilterQ(0.9);
+            voice.setNoiseFilterEnvelope({
+                attack: 0.001,
+                decay: 0.03,
+                sustain: 0.0,
+                release: 0.03,
+                min: 3200,
+                max: 9800,
+            });
+            voice.setMetalGainLevel(0.6);
+            voice.setMetalEnvelope({
+                attack: 0.001,
+                decay: 0.1,
+                release: 0.06,
+            });
+            voice.setMetalHarmonicity(lerp(lateral, 0, 1, 4.4, 7.4));
+            voice.setMetalModulationIndex(lerp(vertical, 0, 1, 12, 30));
+            voice.setMetalOctaves(1.8);
+            voice.setMetalResonance(5200);
+            voice.setMetalFilterType("highpass");
+            voice.setMetalFilterFrequency(6200);
+            voice.setMetalFilterQ(0.6);
+            voice.setMetalFilterEnvelope({
+                attack: 0.001,
+                decay: 0.045,
+                sustain: 0.0,
+                release: 0.03,
+                min: 4200,
+                max: 12000,
+            });
+            voice.setDistortionAmount(0.12);
+            voice.setDistortionWet(0.16);
+            voice.setFrequencyShift(0);
+            voice.setFrequencyShiftWet(0.0);
+            voice.setOutputGainLevel(0.68);
+            voice.triggerNoise(0.03, time, 0.42);
+            voice.triggerMetal("C6", 0.06, time, 0.8);
+            return preset;
+        }
+
+        if (preset === "clang") {
+            voice.setMembraneGainLevel(0.18);
+            voice.setMembraneEnvelope({
+                attack: 0.001,
+                decay: 1.92,
+                sustain: 0.0,
+                release: 1.16,
+            });
+            voice.setMembraneOctaves(3.8);
+            voice.setMembranePitchDecay(0.02);
+            voice.setMembraneFilterType("bandpass");
+            voice.setMembraneFilterFrequency(200);
+            voice.setMembraneFilterQ(1.8);
+            voice.setMetalGainLevel(0.82);
+            voice.setMetalEnvelope({
+                attack: 0.001,
+                decay: 1.18,
+                release: 1.12,
+            });
+            voice.setMetalHarmonicity(lerp(lateral, 0, 1, 2.7, 8.2));
+            voice.setMetalModulationIndex(lerp(vertical, 0, 1, 10, 42));
+            voice.setMetalOctaves(2.6);
+            voice.setMetalResonance(lerp(vertical, 0, 1, 2800, 6200));
+            voice.setMetalFilterType("bandpass");
+            voice.setMetalFilterFrequency(lerp(lateral, 0, 1, 1800, 4200));
+            voice.setMetalFilterQ(1.5);
+            voice.setMetalFilterEnvelope({
+                attack: 0.001,
+                decay: 0.14,
+                sustain: 0.0,
+                release: 0.08,
+                min: 900,
+                max: 7600,
+            });
+            voice.setNoiseGainLevel(0.22);
+            voice.setNoiseType("white");
+            voice.setNoiseFilterType("bandpass");
+            voice.setNoiseFilterFrequency(2600);
+            voice.setNoiseFilterQ(1.1);
+            voice.setDistortionAmount(0.34);
+            voice.setDistortionWet(0.42);
+            voice.setFrequencyShift(lerp(lateral, 0, 1, -180, 180));
+            voice.setFrequencyShiftWet(0.36);
+            voice.setOutputGainLevel(0.74);
+            voice.triggerMembrane("G1", 0.08, time, 0.36);
+            voice.triggerMetal("F#5", 0.12, time, 0.9);
+            voice.triggerNoise(0.04, time, 0.28);
+            return preset;
+        }
+
+        voice.setMembraneGainLevel(0.85);
+        voice.setMembraneEnvelope({
+            attack: 0.001,
+            decay: 0.22,
+            sustain: 0.0,
+            release: 0.3,
+        });
+        voice.setMembraneOctaves(5.2);
+        voice.setMembranePitchDecay(0.03);
+        voice.setMembraneFilterType("lowpass");
+        voice.setMembraneFilterFrequency(130);
+        voice.setMembraneFilterQ(0.9);
+        voice.setMembraneFilterEnvelope({
+            attack: 0.001,
+            decay: 0.09,
+            sustain: 0.0,
+            release: 0.12,
+            min: 85,
+            max: 900,
+        });
+        voice.setNoiseGainLevel(0.0);
+        voice.setMetalGainLevel(0.06);
+        voice.setMetalHarmonicity(3.2);
+        voice.setMetalModulationIndex(8);
+        voice.setMetalOctaves(1.0);
+        voice.setMetalResonance(2600);
+        voice.setMetalFilterType("lowpass");
+        voice.setMetalFilterFrequency(2000);
+        voice.setMetalFilterQ(0.7);
+        voice.setDistortionAmount(0.08);
+        voice.setDistortionWet(0.12);
+        voice.setFrequencyShift(0);
+        voice.setFrequencyShiftWet(0.0);
+        voice.setOutputGainLevel(0.76);
+        voice.triggerMembrane("A1", 1.14, time, 0.8);
+        voice.triggerMetal("A4", 0.05, time, 0.14);
+        return preset;
+    }
+
+    function triggerPercClickGate({ x = 0.5, y = 0.5 } = {}) {
+        const contextIsRunning = Tone.getContext().rawContext.state === "running";
+
+        if (!isStarted && !contextIsRunning) {
+            return false;
+        }
+
+        const now = Tone.now();
+        const windowStart = now - percClickGateState.openWindowSeconds;
+
+        percClickGateState.clickTimes = percClickGateState.clickTimes.filter(
+            (time) => time >= windowStart
+        );
+        percClickGateState.clickTimes.push(now);
+
+        if (now <= percClickGateState.gateOpenUntil) {
+            percClickGateState.gateOpenUntil = now + percClickGateState.holdSeconds;
+            return triggerPercClickTest({ x, y });
+        }
+
+        if (percClickGateState.clickTimes.length >= percClickGateState.requiredClicks) {
+            percClickGateState.gateOpenUntil = now + percClickGateState.holdSeconds;
+            return triggerPercClickTest({ x, y });
+        }
+
+        return false;
+    }
+
     const leadGestureState = {
         isDown: false,
         holdStartTime: 0,
@@ -1768,6 +2577,7 @@ export function createEngine() {
         perfLoop.stop();
         arpVoice.stop();
         leadVoice.stop();
+        percVoice?.stop?.();
         partialSwellTestLoop.stop();
         Tone.Transport.stop();
         isStarted = false;
@@ -1777,12 +2587,14 @@ export function createEngine() {
         stop();
         arpVoice.dispose();
         leadVoice.dispose();
+        percVoice?.dispose?.();
         voices.forEach((voice) => voice.dispose());
         drone2VisualMeter.dispose();
         drone2VisualTap.dispose();
         visualMeter.dispose();
         visualLevelTap.dispose();
         droneMidCut.dispose();
+        droneKickDuckGain.dispose();
         droneReverbSend.dispose();
         droneReverb.dispose();
         pitchSlideLoop.dispose();
@@ -1917,12 +2729,17 @@ export function createEngine() {
         createLead(options = {}) {
             return lead(options);
         },
+        createPerc(options = {}) {
+            return perc(options);
+        },
         start,
         stop,
         dispose,
         makePitchSequence,
         playArpRun,
         triggerArpGesture,
+        triggerPercClickTest,
+        triggerPercClickGate,
         updateLeadGesture,
         getVisualLevel() {
             const meterValue = visualMeter.getValue();
