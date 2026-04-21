@@ -1145,6 +1145,11 @@ export function createEngine() {
         );
         membraneFilterEnvelope.connect(membraneFilterEnvScale);
         membraneFilterEnvScale.connect(membraneFilter.frequency);
+        const membraneCleanupHighpass = new Tone.Filter({
+            frequency: 20,
+            Q: 0,
+            type: "highpass",
+        });
         const membraneGain = new Tone.Gain(membraneGainLevel);
 
         const metal = new Tone.MetalSynth({
@@ -1216,7 +1221,8 @@ export function createEngine() {
         const limiter = new Tone.Limiter(limiterThreshold);
 
         membrane.connect(membraneFilter);
-        membraneFilter.connect(membraneGain);
+        membraneFilter.connect(membraneCleanupHighpass);
+        membraneCleanupHighpass.connect(membraneGain);
         membraneGain.connect(sourceBus);
 
         metal.connect(metalFilter);
@@ -1245,6 +1251,7 @@ export function createEngine() {
             membraneFilter,
             membraneFilterEnvelope,
             membraneFilterEnvScale,
+            membraneCleanupHighpass,
             membraneGain,
             metal,
             metalFilter,
@@ -1301,6 +1308,13 @@ export function createEngine() {
                     membraneFilterEnvScale,
                     settings
                 );
+            },
+
+            setMembraneCleanupHighpassFrequency(value, rampTime = 0) {
+                const safeValue = Math.max(20, value);
+                rampTime > 0
+                    ? membraneCleanupHighpass.frequency.rampTo(safeValue, rampTime)
+                    : membraneCleanupHighpass.frequency.value = safeValue;
             },
 
             setMembraneGainLevel(value, rampTime = 0) {
@@ -1491,6 +1505,7 @@ export function createEngine() {
                 membraneFilter.dispose();
                 membraneFilterEnvelope.dispose();
                 membraneFilterEnvScale.dispose();
+                membraneCleanupHighpass.dispose();
                 membraneGain.dispose();
                 metal.dispose();
                 metalFilter.dispose();
@@ -1740,7 +1755,7 @@ export function createEngine() {
         clickTimes: [],
         gateOpenUntil: 0,
         openWindowSeconds: 1.5,
-        requiredClicks: 3,
+        requiredClicks: 4,
         holdSeconds: 2.0,
     };
     const percSequenceGateState = {
@@ -1750,6 +1765,10 @@ export function createEngine() {
         requiredClicks: 2,
         fxActive: false,
         sendLevel: 0.18,
+    };
+    const leadAttackDecisionState = {
+        suppressUntil: 0,
+        decisionWindow: 0.12,
     };
 
     function ensurePercVoice() {
@@ -1795,6 +1814,7 @@ export function createEngine() {
             voice.setMembranePitchDecay(lerp(vertical, 0, 1, 0.038, 0.06));
             voice.setMembraneFilterType("lowpass");
             voice.setMembraneFilterFrequency(lerp(vertical, 0, 1, 170, 110));
+            voice.setMembraneCleanupHighpassFrequency(150);
             voice.setMembraneFilterQ(1.1);
             voice.setMembraneFilterEnvelope({
                 attack: 0.001,
@@ -1839,6 +1859,7 @@ export function createEngine() {
             });
             voice.setMembraneOctaves(systemState.engagement >= 0.3 ? randomInRange(6, 9) : 4.2);
             voice.setMembranePitchDecay(0.02);
+            voice.setMembraneCleanupHighpassFrequency(30);
             voice.setMembraneFilterType("bandpass");
             voice.setMembraneFilterFrequency(240);
             voice.setMembraneFilterQ(1.6);
@@ -1958,6 +1979,7 @@ export function createEngine() {
             });
             voice.setMembraneOctaves(3.8);
             voice.setMembranePitchDecay(0.02);
+            voice.setMembraneCleanupHighpassFrequency(30);
             voice.setMembraneFilterType("bandpass");
             voice.setMembraneFilterFrequency(200);
             voice.setMembraneFilterQ(1.8);
@@ -2007,6 +2029,7 @@ export function createEngine() {
         });
         voice.setMembraneOctaves(5.2);
         voice.setMembranePitchDecay(0.03);
+        voice.setMembraneCleanupHighpassFrequency(30);
         voice.setMembraneFilterType("lowpass");
         voice.setMembraneFilterFrequency(130);
         voice.setMembraneFilterQ(0.9);
@@ -2041,6 +2064,17 @@ export function createEngine() {
         percSequenceGateState.gateOpenUntil = 0;
         percSequenceGateState.clicksSincePercGateOpened = 0;
         percSequenceGateState.requiredClicks = randomItem([2, 3]);
+    }
+
+    function markLeadAttackSuppressed(now = Tone.now()) {
+        leadAttackDecisionState.suppressUntil =
+            now + leadAttackDecisionState.decisionWindow;
+    }
+
+    function consumeLeadAttackSuppression(now = Tone.now()) {
+        const shouldSuppress = now <= leadAttackDecisionState.suppressUntil;
+        leadAttackDecisionState.suppressUntil = 0;
+        return shouldSuppress;
     }
 
     function updatePercSequenceFx(now = Tone.now()) {
@@ -2181,16 +2215,19 @@ export function createEngine() {
             if (sequenceWasOpen) {
                 percSequenceGateState.gateOpenUntil =
                     now + percSequenceGateState.holdSeconds;
-                triggerPercSequenceDelayWarp();
+                if (Math.random() < 0.5) {
+                    markLeadAttackSuppressed(now);
+                    triggerPercSequenceDelayWarp();
+                    return triggerPercSequence({ x, y });
+                }
+                return false;
             }
 
             if (Math.random() > 0.75) {
                 return false;
             }
 
-            return sequenceWasOpen
-                ? triggerPercSequence({ x, y })
-                : triggerPercClickTest({ x, y });
+            return triggerPercClickTest({ x, y });
         }
 
         if (percClickGateState.clickTimes.length >= percClickGateState.requiredClicks) {
@@ -2366,7 +2403,7 @@ export function createEngine() {
             leadGestureState.dragDistance = 0;
             leadGestureState.dragEnergy = 0;
             leadGestureState.suppressAttackForPercSequence =
-                now <= percSequenceGateState.gateOpenUntil;
+                consumeLeadAttackSuppression(now);
 
             leadVoice.start();
             leadVoice.setGainLevel(0.0);

@@ -38,6 +38,7 @@ export function mountSketch(
 
     let testGrainSheet = null;
     const activeArpPulses = [];
+    const activeLeadSmears = [];
     const droneXfadeClusters = [];
     const grainBufferScale = 0.45;
     const echoFadeAlpha = 10;
@@ -46,6 +47,10 @@ export function mountSketch(
     const grainBlurPx = 2.5;
     const echoBlurPx = 0;
     const droneXfadeMaxMix = 0.72;
+    let lastLeadSmearAt = 0;
+    let leadDragDistance = 0;
+    const leadSmearMinIntervalMs = 28;
+    const leadSmearMaxCount = 48;
 
     function sendControl(dx, dy, source = "draw", x = p.mouseX, y = p.mouseY) {
       if (!onControl) {
@@ -58,6 +63,10 @@ export function mountSketch(
       const speedPxPerSecond = speed / dt;
       const speedNorm = Math.min(speedPxPerSecond / 3200, 1);
       const accel = speedNorm - lastSpeed;
+
+      if (p.mouseIsPressed && source !== "draw") {
+        leadDragDistance = Math.min(leadDragDistance + speed, 1600);
+      }
 
       onControl({
         x: x / p.width,
@@ -72,6 +81,16 @@ export function mountSketch(
         mouseDown: p.mouseIsPressed,
         source,
       });
+
+      if (p.mouseIsPressed && speed > 1.2 && source !== "draw") {
+        registerLeadSmear({
+          x,
+          y,
+          dx,
+          dy,
+          speedPxPerSecond,
+        });
+      }
 
       lastSpeed = speedNorm;
       lastControlTime = now;
@@ -257,6 +276,78 @@ export function mountSketch(
     }
     registerArpPulseFn = registerArpPulse;
 
+    function registerLeadSmear({
+      x = p.mouseX,
+      y = p.mouseY,
+      dx = 0,
+      dy = 0,
+      speedPxPerSecond = 0,
+    } = {}) {
+      if (!sourceImages.length) {
+        return;
+      }
+
+      const nowMs = p.millis();
+      if (nowMs - lastLeadSmearAt < leadSmearMinIntervalMs) {
+        return;
+      }
+
+      const distance = Math.hypot(dx, dy);
+      if (distance < 1) {
+        return;
+      }
+
+      const dirX = dx / distance;
+      const dirY = dy / distance;
+      const normalX = -dirY;
+      const normalY = dirX;
+      const speedNorm = p.constrain(speedPxPerSecond / 1800, 0, 1.6);
+      const dragProgress = p.constrain(leadDragDistance / 520, 0, 1);
+      const stampCount = speedNorm > 0.85 ? 2 : 1;
+
+      for (let i = 0; i < stampCount; i += 1) {
+        const alongOffset = p.random(-18, 12) - i * p.random(18, 34);
+        const normalOffset = p.random(-18, 18);
+        const stampX = x + dirX * alongOffset + normalX * normalOffset;
+        const stampY = y + dirY * alongOffset + normalY * normalOffset;
+        const grain = makeGrain(
+          p.random(78, 132) * (0.8 + speedNorm * 0.55),
+          p.random(26, 54) * (0.9 + speedNorm * 0.25),
+          stampX,
+          stampY,
+          Math.atan2(dirY, dirX) + p.random(-0.18, 0.18)
+        );
+
+        if (!grain) {
+          continue;
+        }
+
+        grain.alpha = p.random(0.14, 0.26) * (0.75 + speedNorm * 0.25);
+
+        activeLeadSmears.push({
+          grain,
+          createdAt: nowMs,
+          duration: p.random(320, 720),
+          directionX: dirX,
+          directionY: dirY,
+          driftDistance: p.random(22, 58) * (0.65 + speedNorm * 0.45),
+          stretch: p.random(0.4, 1.8) * (0.85 + speedNorm * 0.25),
+          squash: p.random(
+            p.lerp(1.0, 7.0, dragProgress * 0.8),
+            p.lerp(1.5, 8.2, dragProgress * 0.8)
+          ),
+          driftJitter: p.random(0.82, 1.18),
+          alphaBoost: p.random(0.9, 1.2),
+        });
+      }
+
+      if (activeLeadSmears.length > leadSmearMaxCount) {
+        activeLeadSmears.splice(0, activeLeadSmears.length - leadSmearMaxCount);
+      }
+
+      lastLeadSmearAt = nowMs;
+    }
+
     function triggerGrainMotionBurst(grain, pulse) {
       const distance = Math.hypot(grain.x - pulse.x, grain.y - pulse.y);
       if (distance >= pulse.radius) {
@@ -360,6 +451,29 @@ export function mountSketch(
         grain.blobMorphProgress -= 1;
         setNextBlobTarget(grain);
       }
+    }
+
+    function getGrainSamplePosition(grain) {
+      const morphAmount = Math.min(Math.max(grain.morphProgress, 0), 1);
+      const maxSx = Math.max(0, grain.sourceImage.width - grain.w);
+      const maxSy = Math.max(0, grain.sourceImage.height - grain.h);
+
+      return {
+        sx: Math.min(
+          maxSx,
+          Math.max(
+            0,
+            grain.startSx + morphAmount * (grain.targetSx - grain.startSx)
+          )
+        ),
+        sy: Math.min(
+          maxSy,
+          Math.max(
+            0,
+            grain.startSy + morphAmount * (grain.targetSy - grain.startSy)
+          )
+        ),
+      };
     }
 
     function makeGrain(w, h, x, y, rotation) {
@@ -624,6 +738,93 @@ export function mountSketch(
       ctx.restore();
     }
 
+    function drawLeadSmear(target, smear, nowMs, audioLevel, droneXfadeMix) {
+      const { grain } = smear;
+      const imageSource = grain.sourceImage?.canvas || grain.sourceImage?.elt;
+      const secondaryImageSource =
+        grain.secondarySourceImage?.canvas || grain.secondarySourceImage?.elt;
+
+      if (!imageSource) {
+        return;
+      }
+
+      const age = nowMs - smear.createdAt;
+      const life = Math.min(Math.max(age / smear.duration, 0), 1);
+      const fadeIn = Math.min(1, life / 0.18);
+      const fadeOut = 1 - life;
+      const alphaEnvelope = fadeIn * fadeOut * smear.alphaBoost;
+      const drift = smear.driftDistance * life * smear.driftJitter;
+      const baseDrawState = getGrainDrawState(target, grain, nowMs, audioLevel * 0.35);
+      const targetScaleX = target.width / p.width;
+      const targetScaleY = target.height / p.height;
+      const stretch = 1 + smear.stretch * (1 - life * 0.45);
+      const squeeze = smear.squash + (1 - smear.squash) * life * 0.35;
+      const drawState = {
+        x: baseDrawState.x + smear.directionX * drift * targetScaleX,
+        y: baseDrawState.y + smear.directionY * drift * targetScaleY,
+        rotation: grain.rotation,
+        drawW: baseDrawState.drawW * stretch,
+        drawH: baseDrawState.drawH * squeeze,
+        maskW: baseDrawState.maskW * (0.92 + (stretch - 1) * 0.8),
+        maskH: baseDrawState.maskH * (0.84 + (squeeze - 0.84) * 0.9),
+      };
+      const { sx, sy } = getGrainSamplePosition(grain);
+      const crossfadeT = Math.min(
+        1,
+        Math.max(0, droneXfadeMix / Math.max(droneXfadeMaxMix, 0.001))
+      );
+      const baseAlpha = grain.alpha * alphaEnvelope * (1 - crossfadeT);
+      const secondaryAlpha = grain.alpha * alphaEnvelope * crossfadeT;
+      const ctx = target.drawingContext;
+
+      ctx.save();
+      ctx.translate(drawState.x, drawState.y);
+      ctx.rotate(drawState.rotation);
+      ctx.beginPath();
+      traceBlobPath(ctx, grain, drawState, nowMs);
+      ctx.clip();
+      ctx.globalCompositeOperation = "lighter";
+
+      if (baseAlpha > 0.001) {
+        ctx.globalAlpha = baseAlpha;
+        ctx.drawImage(
+          imageSource,
+          sx,
+          sy,
+          grain.w,
+          grain.h,
+          -drawState.drawW * 0.5,
+          -drawState.drawH * 0.5,
+          drawState.drawW,
+          drawState.drawH
+        );
+      }
+
+      if (secondaryAlpha > 0.001 && secondaryImageSource && grain.secondarySourceImage) {
+        const mappedSample = mapSamplePositionToImage(
+          grain.sourceImage,
+          grain.secondarySourceImage,
+          grain,
+          sx,
+          sy
+        );
+        ctx.globalAlpha = secondaryAlpha;
+        ctx.drawImage(
+          secondaryImageSource,
+          mappedSample.sx,
+          mappedSample.sy,
+          grain.w,
+          grain.h,
+          -drawState.drawW * 0.5,
+          -drawState.drawH * 0.5,
+          drawState.drawW,
+          drawState.drawH
+        );
+      }
+
+      ctx.restore();
+    }
+
     function makeGrainSheet(grainSize) {
       const stepX = grainSize * 0.5;
       const stepY = grainSize * 0.46;
@@ -711,6 +912,7 @@ export function mountSketch(
 
       if (p.mouseIsPressed && pointerInCanvas && !lastMouseDownState) {
         gestureActive = true;
+        leadDragDistance = 0;
       }
 
       if (gestureActive && (p.mouseIsPressed || mouseStateChanged)) {
@@ -718,6 +920,7 @@ export function mountSketch(
       }
       if (!p.mouseIsPressed) {
         gestureActive = false;
+        leadDragDistance = 0;
       }
       lastMouseDownState = p.mouseIsPressed;
 
@@ -743,6 +946,11 @@ export function mountSketch(
       for (let i = activeArpPulses.length - 1; i >= 0; i -= 1) {
         if (now - activeArpPulses[i].createdAt >= activeArpPulses[i].duration) {
           activeArpPulses.splice(i, 1);
+        }
+      }
+      for (let i = activeLeadSmears.length - 1; i >= 0; i -= 1) {
+        if (now - activeLeadSmears[i].createdAt >= activeLeadSmears[i].duration) {
+          activeLeadSmears.splice(i, 1);
         }
       }
       const droneXfadeClusterStates = getDroneXfadeClusterStates(now);
@@ -773,23 +981,7 @@ export function mountSketch(
           setNextGrainTarget(grain);
         }
 
-        const morphAmount = Math.min(Math.max(grain.morphProgress, 0), 1);
-        const maxSx = Math.max(0, grain.sourceImage.width - grain.w);
-        const maxSy = Math.max(0, grain.sourceImage.height - grain.h);
-        const sx = Math.min(
-          maxSx,
-          Math.max(
-            0,
-            grain.startSx + morphAmount * (grain.targetSx - grain.startSx)
-          )
-        );
-        const sy = Math.min(
-          maxSy,
-          Math.max(
-            0,
-            grain.startSy + morphAmount * (grain.targetSy - grain.startSy)
-          )
-        );
+        const { sx, sy } = getGrainSamplePosition(grain);
 
         const droneXfadeMix =
           grain.droneXfadeInfluence * smoothedDrone2Level;
@@ -802,6 +994,25 @@ export function mountSketch(
           smoothedAudioLevel,
           arpBoost,
           droneXfadeMix
+        );
+      }
+
+      for (let i = 0; i < activeLeadSmears.length; i += 1) {
+        const smear = activeLeadSmears[i];
+        updateGrainBlobMorph(smear.grain, dtMs * 1.4);
+        smear.grain.morphProgress += (dtMs / smear.grain.morphDuration) * 1.7;
+
+        while (smear.grain.morphProgress >= 1) {
+          smear.grain.morphProgress -= 1;
+          setNextGrainTarget(smear.grain);
+        }
+
+        drawLeadSmear(
+          grainBuffer,
+          smear,
+          now,
+          smoothedAudioLevel,
+          smear.grain.droneXfadeBias * smoothedDrone2Level * 0.18
         );
       }
 
