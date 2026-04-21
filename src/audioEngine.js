@@ -1077,6 +1077,9 @@ export function createEngine() {
         distortionWet = 0.35,
         frequencyShift = 0,
         frequencyShiftWet = 0.28,
+        delaySendLevel = 0.0,
+        delayTime = 0.11,
+        delayFeedback = 0.88,
         reverbSendLevel = 0.16,
         outputGainLevel = 0.75,
         limiterThreshold = -4,
@@ -1203,6 +1206,12 @@ export function createEngine() {
         });
         frequencyShifter.wet.value = frequencyShiftWet;
         const outputGain = new Tone.Gain(outputGainLevel);
+        const delSendGain = new Tone.Gain(delaySendLevel);
+        const splashDelay = new Tone.FeedbackDelay({
+            delayTime,
+            feedback: delayFeedback,
+            wet: 1.0,
+        });
         const reverbSend = new Tone.Gain(reverbSendLevel);
         const limiter = new Tone.Limiter(limiterThreshold);
 
@@ -1222,6 +1231,10 @@ export function createEngine() {
         distortion.connect(frequencyShifter);
         frequencyShifter.connect(outputGain);
         outputGain.connect(limiter);
+        limiter.connect(delSendGain);
+        delSendGain.connect(splashDelay);
+        splashDelay.connect(visualLevelTap);
+        splashDelay.toDestination();
         limiter.connect(reverbSend);
         reverbSend.connect(droneReverb);
         limiter.connect(visualLevelTap);
@@ -1247,6 +1260,8 @@ export function createEngine() {
             distortion,
             frequencyShifter,
             outputGain,
+            delSendGain,
+            splashDelay,
             reverbSend,
             limiter,
 
@@ -1406,6 +1421,27 @@ export function createEngine() {
                     : outputGain.gain.value = value;
             },
 
+            setDelSendGain(value, rampTime = 0) {
+                const safeValue = Math.max(0, value);
+                rampTime > 0
+                    ? delSendGain.gain.rampTo(safeValue, rampTime)
+                    : delSendGain.gain.value = safeValue;
+            },
+
+            setDelayTime(value, rampTime = 0) {
+                const safeValue = clamp(value, 0.005, 1.0);
+                rampTime > 0
+                    ? splashDelay.delayTime.rampTo(safeValue, rampTime)
+                    : splashDelay.delayTime.value = safeValue;
+            },
+
+            setDelayFeedback(value, rampTime = 0) {
+                const safeValue = clamp(value, 0.0, 0.99);
+                rampTime > 0
+                    ? splashDelay.feedback.rampTo(safeValue, rampTime)
+                    : splashDelay.feedback.value = safeValue;
+            },
+
             setReverbSendLevel(value, rampTime = 0) {
                 const safeValue = Math.max(0, value);
                 rampTime > 0
@@ -1470,6 +1506,8 @@ export function createEngine() {
                 distortion.dispose();
                 frequencyShifter.dispose();
                 outputGain.dispose();
+                delSendGain.dispose();
+                splashDelay.dispose();
                 reverbSend.dispose();
                 limiter.dispose();
             },
@@ -1606,8 +1644,10 @@ export function createEngine() {
     }
 
     const systemStateMaintenanceLoop = new Tone.Loop(() => {
-        updateSystemState(Tone.now(), 0, 0);
-        updateDronePartialMorphSwells(Tone.now());
+        const now = Tone.now();
+        updateSystemState(now, 0, 0);
+        updateDronePartialMorphSwells(now);
+        updatePercSequenceFx(now);
         // console.log("system state:", {
         //     engagement: systemState.engagement.toFixed(2),
         //     agitation: systemState.agitation.toFixed(2),
@@ -1703,6 +1743,14 @@ export function createEngine() {
         requiredClicks: 3,
         holdSeconds: 2.0,
     };
+    const percSequenceGateState = {
+        gateOpenUntil: 0,
+        holdSeconds: 2.0,
+        clicksSincePercGateOpened: 0,
+        requiredClicks: 2,
+        fxActive: false,
+        sendLevel: 0.18,
+    };
 
     function ensurePercVoice() {
         if (!percVoice) {
@@ -1711,7 +1759,12 @@ export function createEngine() {
         return percVoice;
     }
 
-    function triggerPercClickTest({ x = 0.5, y = 0.5 } = {}) {
+    function triggerPercClickTest({
+        x = 0.5,
+        y = 0.5,
+        timeOverride = null,
+        presetOverride = null,
+    } = {}) {
         const contextIsRunning = Tone.getContext().rawContext.state === "running";
 
         if (!isStarted && !contextIsRunning) {
@@ -1719,10 +1772,8 @@ export function createEngine() {
         }
 
         const voice = ensurePercVoice();
-        const time = Tone.now() + 0.005;
-        // const preset = "kick"
-        // const preset = "snare"
-        const preset = randomItem([
+        const time = timeOverride ?? (Tone.now() + 0.005);
+        const preset = presetOverride ?? randomItem([
             "kick",
             "snare",
             "hat",
@@ -1986,6 +2037,117 @@ export function createEngine() {
         return preset;
     }
 
+    function resetPercSequenceGate() {
+        percSequenceGateState.gateOpenUntil = 0;
+        percSequenceGateState.clicksSincePercGateOpened = 0;
+        percSequenceGateState.requiredClicks = randomItem([2, 3]);
+    }
+
+    function updatePercSequenceFx(now = Tone.now()) {
+        const shouldBeActive = now <= percSequenceGateState.gateOpenUntil;
+
+        if (shouldBeActive === percSequenceGateState.fxActive) {
+            return;
+        }
+
+        percSequenceGateState.fxActive = shouldBeActive;
+
+        if (!percVoice) {
+            return;
+        }
+
+        if (shouldBeActive) {
+            percVoice.setDelSendGain(percSequenceGateState.sendLevel, 0.08);
+            return;
+        }
+
+        percVoice.setDelSendGain(0.0, 0.28);
+    }
+
+    function triggerPercSequenceDelayWarp() {
+        const voice = ensurePercVoice();
+
+        voice.setDelayFeedback(randomInRange(0.82, 0.94), 0.08);
+        voice.setDelayTime(
+            randomInRange(0.05, 0.15),
+            randomInRange(0.1, 0.2)
+        );
+    }
+
+    function makePercSequencePresets(hitCount) {
+        const basePattern = randomItem([
+            ["kick", "snare"],
+            ["kick", "clang", "snare"],
+            ["thud", "hat", "snare"],
+            ["kick", "hat", "clang", "snare"],
+            ["clang", "snare", "hat"],
+            ["kick", "thud", "snare"],
+        ]);
+        const presets = [];
+
+        for (let i = 0; i < hitCount; i += 1) {
+            if (i < basePattern.length) {
+                presets.push(basePattern[i]);
+                continue;
+            }
+
+            const previousPreset = presets[presets.length - 1];
+            const nextOptions = ["kick", "snare", "hat", "clang", "thud"].filter(
+                (preset) => preset !== previousPreset
+            );
+            presets.push(randomItem(nextOptions));
+        }
+
+        return presets;
+    }
+
+    function triggerPercSequence({ x = 0.5, y = 0.5 } = {}) {
+        const contextIsRunning = Tone.getContext().rawContext.state === "running";
+
+        if (!isStarted && !contextIsRunning) {
+            return false;
+        }
+
+        const sequenceEnergy = clamp(
+            systemState.engagement * 0.45 + systemState.agitation * 0.8,
+            0,
+            1
+        );
+        const maxHits = sequenceEnergy >= 0.7 ? 5 : sequenceEnergy >= 0.42 ? 4 : 3;
+        // const hitCount = clamp(
+        //     Math.round(2 + sequenceEnergy * 3 + randomInRange(-0.35, 0.45)),
+        //     2,
+        //     maxHits
+        // );
+
+        const hitCount = 2;
+        const stepSeconds = randomItem([0.11, 0.22]);
+        const presets = makePercSequencePresets(hitCount);
+
+        presets.forEach((preset, index) => {
+            if (index === 0) {
+                triggerPercClickTest({
+                    x,
+                    y,
+                    presetOverride: preset,
+                });
+                return;
+            }
+
+            const offsetSeconds = index * stepSeconds;
+            Tone.Transport.scheduleOnce((time) => {
+                triggerPercClickTest({
+                    x,
+                    y,
+                    timeOverride: time,
+                    presetOverride: preset,
+                });
+            }, `+${offsetSeconds}`);
+        });
+
+        return presets;
+    }
+
     function triggerPercClickGate({ x = 0.5, y = 0.5 } = {}) {
         const contextIsRunning = Tone.getContext().rawContext.state === "running";
 
@@ -2002,12 +2164,39 @@ export function createEngine() {
         percClickGateState.clickTimes.push(now);
 
         if (now <= percClickGateState.gateOpenUntil) {
+            const sequenceWasOpen = now <= percSequenceGateState.gateOpenUntil;
             percClickGateState.gateOpenUntil = now + percClickGateState.holdSeconds;
-            return triggerPercClickTest({ x, y });
+            percSequenceGateState.clicksSincePercGateOpened += 1;
+
+            if (
+                !sequenceWasOpen &&
+                percSequenceGateState.clicksSincePercGateOpened >=
+                    percSequenceGateState.requiredClicks
+            ) {
+                percSequenceGateState.gateOpenUntil =
+                    now + percSequenceGateState.holdSeconds;
+                updatePercSequenceFx(now);
+            }
+
+            if (sequenceWasOpen) {
+                percSequenceGateState.gateOpenUntil =
+                    now + percSequenceGateState.holdSeconds;
+                triggerPercSequenceDelayWarp();
+            }
+
+            if (Math.random() > 0.75) {
+                return false;
+            }
+
+            return sequenceWasOpen
+                ? triggerPercSequence({ x, y })
+                : triggerPercClickTest({ x, y });
         }
 
         if (percClickGateState.clickTimes.length >= percClickGateState.requiredClicks) {
             percClickGateState.gateOpenUntil = now + percClickGateState.holdSeconds;
+            resetPercSequenceGate();
+            updatePercSequenceFx(now);
             return triggerPercClickTest({ x, y });
         }
 
@@ -2019,6 +2208,7 @@ export function createEngine() {
         holdStartTime: 0,
         dragDistance: 0,
         dragEnergy: 0,
+        suppressAttackForPercSequence: false,
         lastUpdateTime: Tone.now(),
         pitchChangePoints: [],
         nextPitchChangeIndex: 0,
@@ -2041,6 +2231,8 @@ export function createEngine() {
         holdGainBoost: 0.08,
         gainAttack: 0.02,
         gainRelease: 5.18,
+        suppressedHoldFadeInStart: 0.8,
+        suppressedHoldFadeInDuration: 0.55,
         quickReleaseMaxHold: 0.5,
         clickDelaySplashPeak: 0.42,
         clickDelaySplashAttack: 0.02,
@@ -2173,6 +2365,8 @@ export function createEngine() {
             leadGestureState.holdStartTime = now;
             leadGestureState.dragDistance = 0;
             leadGestureState.dragEnergy = 0;
+            leadGestureState.suppressAttackForPercSequence =
+                now <= percSequenceGateState.gateOpenUntil;
 
             leadVoice.start();
             leadVoice.setGainLevel(0.0);
@@ -2186,7 +2380,9 @@ export function createEngine() {
             // leadVoice.setHighOscPitch(getNearestStableDronePitch(randomItem(voices)));
             leadVoice.setFilterFrequency(leadGestureConfig.filterPressHigh);
             leadVoice.setGainLevel(
-                leadGestureConfig.pressGain,
+                leadGestureState.suppressAttackForPercSequence
+                    ? 0.0
+                    : leadGestureConfig.pressGain,
                 leadGestureConfig.gainAttack
             );
             leadVoice.setFilterFrequency(
@@ -2211,6 +2407,7 @@ export function createEngine() {
             leadGestureState.isDown = false;
             leadGestureState.dragDistance = 0;
             leadGestureState.dragEnergy = 0;
+            leadGestureState.suppressAttackForPercSequence = false;
 
             leadVoice.setGainLevel(0.0, leadGestureConfig.gainRelease);
             leadVoice.setModulationIndex(0.0, 0.14);
@@ -2270,9 +2467,21 @@ export function createEngine() {
             clamp(leadGestureState.dragEnergy * 0.85 + dragProgress * 0.4, 0, 1) *
                 leadGestureConfig.modIndexRange;
         const holdGainProgress = holdProgress * (1 - holdProgress * 0.45);
-        const gainTarget =
+        let gainTarget =
             leadGestureConfig.holdBaseGain +
             holdGainProgress * leadGestureConfig.holdGainBoost;
+        const holdDuration = now - leadGestureState.holdStartTime;
+
+        if (leadGestureState.suppressAttackForPercSequence) {
+            const fadeInProgress = clamp(
+                (holdDuration - leadGestureConfig.suppressedHoldFadeInStart) /
+                    leadGestureConfig.suppressedHoldFadeInDuration,
+                0,
+                1
+            );
+            const easedFadeIn = fadeInProgress * fadeInProgress * (3 - 2 * fadeInProgress);
+            gainTarget *= easedFadeIn;
+        }
 
 
         const leadInfluence = clamp(
