@@ -8,20 +8,27 @@ const droneXfadeImageUrl = new URL(
   "./images/complex2.webp",
   import.meta.url
 ).href;
+const foregroundGrainImageUrl = new URL(
+  "./images/pollock2.jpg",
+  import.meta.url
+).href;
 
 export function mountSketch(
   containerEl,
   onControl,
   onClick,
   getAudioLevel,
-  getDrone2Level
+  getDrone2Level,
+  getAgitationLevel
 ) {
   let cleanupPointerMove = () => {};
   let registerArpPulseFn = () => {};
+  let registerArpForegroundSparkFn = () => {};
 
   const instance = new p5((p) => {
     let sourceImages = [];
     let droneXfadeImage = null;
+    let foregroundSourceImage = null;
     let canvasEl = null;
     let grainBuffer = null;
     let echoBuffer = null;
@@ -33,11 +40,14 @@ export function mountSketch(
     let gestureActive = false;
     let smoothedAudioLevel = 0;
     let smoothedDrone2Level = 0;
+    let smoothedAgitationLevel = 0;
+    let smoothedDragTremble = 0;
     let lastDrawTimeMs = 0;
     let echoFrameCounter = 0;
 
     let testGrainSheet = null;
     const activeArpPulses = [];
+    const activeArpForegroundGrains = [];
     const activeLeadSmears = [];
     const droneXfadeClusters = [];
     const grainBufferScale = 0.45;
@@ -51,6 +61,7 @@ export function mountSketch(
     let leadDragDistance = 0;
     const leadSmearMinIntervalMs = 28;
     const leadSmearMaxCount = 48;
+    const foregroundGrainMaxCount = 24;
 
     function sendControl(dx, dy, source = "draw", x = p.mouseX, y = p.mouseY) {
       if (!onControl) {
@@ -276,6 +287,136 @@ export function mountSketch(
     }
     registerArpPulseFn = registerArpPulse;
 
+    function easeOutCubic(t) {
+      return 1 - Math.pow(1 - t, 3);
+    }
+
+    function easeInCubic(t) {
+      return t * t * t;
+    }
+
+    function easeInOutSine(t) {
+      return -(Math.cos(Math.PI * t) - 1) * 0.5;
+    }
+
+    function drawForegroundSparkPass(
+      ctx,
+      grain,
+      drawState,
+      sx,
+      sy,
+      nowMs,
+      alpha
+    ) {
+      const imageSource = grain.sourceImage?.canvas || grain.sourceImage?.elt;
+      if (!imageSource || alpha <= 0.001) {
+        return;
+      }
+
+      ctx.save();
+      ctx.translate(drawState.x, drawState.y);
+      ctx.rotate(drawState.rotation);
+      ctx.beginPath();
+      traceBlobPath(ctx, grain, drawState, nowMs);
+      ctx.clip();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(
+        imageSource,
+        sx,
+        sy,
+        grain.w,
+        grain.h,
+        -drawState.drawW * 0.5,
+        -drawState.drawH * 0.5,
+        drawState.drawW,
+        drawState.drawH
+      );
+      ctx.restore();
+    }
+
+    function registerArpForegroundSpark({
+      x = p.width * 0.5,
+      y = p.height * 0.5,
+      dx = 0,
+      dy = 0,
+      speedPxPerSecond = 0,
+      noteIndex = 0,
+      noteCount = 1,
+      strength = 1.0,
+    } = {}) {
+      if (!foregroundSourceImage) {
+        return;
+      }
+
+      const nowMs = p.millis();
+      const originX = Math.abs(x) <= 1 ? x * p.width : x;
+      const originY = Math.abs(y) <= 1 ? y * p.height : y;
+      const moveDistance = Math.hypot(dx, dy);
+      const fallbackAngle = p.random(Math.PI * 2);
+      const dirX =
+        moveDistance > 0.001 ? dx / moveDistance : Math.cos(fallbackAngle);
+      const dirY =
+        moveDistance > 0.001 ? dy / moveDistance : Math.sin(fallbackAngle);
+      const normalX = -dirY;
+      const normalY = dirX;
+      const speedNorm = p.constrain(speedPxPerSecond / 1800, 0.24, 1.6);
+      const noteProgress =
+        noteCount > 1 ? noteIndex / Math.max(noteCount - 1, 1) : 0;
+      const alongOffset = p.random(-12, 12) + noteProgress * p.random(14, 42);
+      const normalOffset = p.random(-26, 26);
+      const spawnX = originX + dirX * alongOffset + normalX * normalOffset;
+      const spawnY = originY + dirY * alongOffset + normalY * normalOffset;
+      const grain = makeGrain(
+        p.random(30, 58) * (0.9 + speedNorm * 0.14),
+        p.random(24, 50) * (0.88 + speedNorm * 0.12),
+        spawnX,
+        spawnY,
+        Math.atan2(dirY, dirX) + p.random(-0.5, 0.5),
+        {
+          sourceImageOverride: foregroundSourceImage,
+          secondarySourceImageOverride: null,
+          alphaRange: [0.24, 0.48],
+          blobPointCountRange: [9, 14],
+        }
+      );
+
+      if (!grain) {
+        return;
+      }
+
+      grain.morphDuration *= p.random(0.28, 0.52);
+      grain.blobMorphDuration *= p.random(0.34, 0.58);
+
+      activeArpForegroundGrains.push({
+        grain,
+        createdAt: nowMs,
+        duration: p.random(1050, 1950),
+        strength,
+        velocityX:
+          (dirX * p.random(220, 460) + normalX * p.random(-68, 68)) *
+          (1.02 + speedNorm * 0.42),
+        velocityY:
+          (dirY * p.random(220, 460) + normalY * p.random(-68, 68)) *
+          (1.02 + speedNorm * 0.42),
+        drag: p.random(0.9, 0.95),
+        basePeakScale: p.random(0.34, 0.62),
+        peakScale: 0,
+        startScale: p.random(0.015, 0.06),
+        endScale: p.random(0.0, 0.06),
+        alphaBoost: p.random(0.8, 1.12),
+        fadeMode: Math.random() < 0.6 ? "shrink" : "fade",
+      });
+
+      if (activeArpForegroundGrains.length > foregroundGrainMaxCount) {
+        activeArpForegroundGrains.splice(
+          0,
+          activeArpForegroundGrains.length - foregroundGrainMaxCount
+        );
+      }
+    }
+    registerArpForegroundSparkFn = registerArpForegroundSpark;
+
     function registerLeadSmear({
       x = p.mouseX,
       y = p.mouseY,
@@ -333,8 +474,8 @@ export function mountSketch(
           driftDistance: p.random(22, 58) * (0.65 + speedNorm * 0.45),
           stretch: p.random(0.4, 1.8) * (0.85 + speedNorm * 0.25),
           squash: p.random(
-            p.lerp(1.0, 7.0, dragProgress * 0.8),
-            p.lerp(1.5, 8.2, dragProgress * 0.8)
+            p.lerp(1.0, 2.0, dragProgress * 0.8),
+            p.lerp(1.5, 4.2, dragProgress * 0.8)
           ),
           driftJitter: p.random(0.82, 1.18),
           alphaBoost: p.random(0.9, 1.2),
@@ -476,16 +617,25 @@ export function mountSketch(
       };
     }
 
-    function makeGrain(w, h, x, y, rotation) {
-      if (!sourceImages.length) {
+    function makeGrain(w, h, x, y, rotation, options = {}) {
+      const {
+        sourceImageOverride = null,
+        secondarySourceImageOverride = droneXfadeImage,
+        alphaRange = [0.18, 0.38],
+        blobPointCountRange = [20, 32],
+      } = options;
+
+      if (!sourceImages.length && !sourceImageOverride) {
         return;
       }
 
-      const sourceImage = p.random(sourceImages);
+      const sourceImage = sourceImageOverride ?? p.random(sourceImages);
       const startSample = randomSamplePosition(sourceImage, w, h);
       const targetSample = randomSamplePosition(sourceImage, w, h);
       const morphDuration = getMorphDuration(startSample, targetSample);
-      const blobPointCount = Math.floor(p.random(20, 32));
+      const blobPointCount = Math.floor(
+        p.random(blobPointCountRange[0], blobPointCountRange[1])
+      );
       const startBlobPoints = makeBlobPoints(blobPointCount);
       const targetBlobPoints = makeBlobPoints(blobPointCount);
 
@@ -502,7 +652,7 @@ export function mountSketch(
         targetSy: targetSample.sy,
         morphDuration,
         morphProgress: p.random(),
-        alpha: p.random(0.18, 0.38),
+        alpha: p.random(alphaRange[0], alphaRange[1]),
         maskScaleX: p.random(0.72, 0.92),
         maskScaleY: p.random(0.72, 0.92),
         pulseRate: p.random(0.16, 0.5) * Math.PI * 2,
@@ -516,6 +666,15 @@ export function mountSketch(
         warpDepthY: p.random(0.04, 0.11),
         maskWarpDepthX: p.random(0.03, 0.08),
         maskWarpDepthY: p.random(0.03, 0.08),
+        tremblePhaseX: p.random(Math.PI * 2),
+        tremblePhaseY: p.random(Math.PI * 2),
+        trembleRateX: p.random(7.5, 12.5) * Math.PI * 2,
+        trembleRateY: p.random(7.5, 12.5) * Math.PI * 2,
+        trembleFinePhaseX: p.random(Math.PI * 2),
+        trembleFinePhaseY: p.random(Math.PI * 2),
+        trembleFineRateX: p.random(14, 22) * Math.PI * 2,
+        trembleFineRateY: p.random(14, 22) * Math.PI * 2,
+        trembleBias: p.random(0.75, 1.25),
         audioPulseLift: p.random(0.08, 0.94),
         arpOverlayColor: p.random([
           [90, 170, 255],
@@ -523,7 +682,7 @@ export function mountSketch(
           [210, 110, 255],
         ]),
         arpOverlayStrength: p.random(0.7, 1.2),
-        secondarySourceImage: droneXfadeImage,
+        secondarySourceImage: secondarySourceImageOverride,
         droneXfadeInfluence: 0,
         droneXfadeBias: p.random(0.78, 2.18),
         blobPointCount,
@@ -538,7 +697,13 @@ export function mountSketch(
       };
     }
 
-    function getGrainDrawState(target, grain, nowMs, audioLevel) {
+    function getGrainDrawState(
+      target,
+      grain,
+      nowMs,
+      audioLevel,
+      trembleIntensity = 0
+    ) {
       const targetScaleX = target.width / p.width;
       const targetScaleY = target.height / p.height;
       const time = nowMs * 0.001;
@@ -564,9 +729,27 @@ export function mountSketch(
           time * (grain.warpRateY * 0.91) + grain.warpPhaseX * 0.67
         ) *
           grain.maskWarpDepthY;
+      const trembleAmount = trembleIntensity * trembleIntensity;
+      const tremblePx = p.lerp(0, 9.5, trembleAmount) * grain.trembleBias;
+      const trembleX =
+        tremblePx *
+        (Math.sin(time * grain.trembleRateX + grain.tremblePhaseX) * 0.68 +
+          Math.sin(
+            time * grain.trembleFineRateX + grain.trembleFinePhaseX
+          ) *
+            0.32) *
+        targetScaleX;
+      const trembleY =
+        tremblePx *
+        (Math.sin(time * grain.trembleRateY + grain.tremblePhaseY) * 0.68 +
+          Math.sin(
+            time * grain.trembleFineRateY + grain.trembleFinePhaseY
+          ) *
+            0.32) *
+        targetScaleY;
       return {
-        x: (grain.x + grain.motionOffsetX) * targetScaleX,
-        y: (grain.y + grain.motionOffsetY) * targetScaleY,
+        x: (grain.x + grain.motionOffsetX) * targetScaleX + trembleX,
+        y: (grain.y + grain.motionOffsetY) * targetScaleY + trembleY,
         rotation: grain.rotation,
         drawW: grain.w * pulse * warpX * targetScaleX,
         drawH: grain.h * pulse * warpY * targetScaleY,
@@ -657,7 +840,8 @@ export function mountSketch(
       nowMs,
       audioLevel,
       arpBoost,
-      droneXfadeMix
+      droneXfadeMix,
+      trembleIntensity = 0
     ) {
       const ctx = target.drawingContext;
       const imageSource = grain.sourceImage?.canvas || grain.sourceImage?.elt;
@@ -668,7 +852,13 @@ export function mountSketch(
         return;
       }
 
-      const drawState = getGrainDrawState(target, grain, nowMs, audioLevel);
+      const drawState = getGrainDrawState(
+        target,
+        grain,
+        nowMs,
+        audioLevel,
+        trembleIntensity
+      );
       const crossfadeT = Math.min(
         1,
         Math.max(0, droneXfadeMix / Math.max(droneXfadeMaxMix, 0.001))
@@ -825,6 +1015,107 @@ export function mountSketch(
       ctx.restore();
     }
 
+    function drawForegroundGrain(target, foregroundGrain, nowMs) {
+      const { grain } = foregroundGrain;
+      if (!grain.sourceImage) {
+        return;
+      }
+
+      const age = nowMs - foregroundGrain.createdAt;
+      const life = Math.min(Math.max(age / foregroundGrain.duration, 0), 1);
+      const motionMagnitude = Math.hypot(
+        foregroundGrain.velocityX,
+        foregroundGrain.velocityY
+      );
+      const motionFade = p.constrain(motionMagnitude / 120, 0, 1);
+      const agitationBoost = p.constrain(
+        (smoothedAgitationLevel - 0.3) / 0.29,
+        0,
+        1
+      );
+      const grow = easeOutCubic(Math.min(1, life / 0.24));
+      const settle = easeInOutSine(Math.min(1, life / 0.86));
+      const shrink = easeInCubic(Math.max(0, (life - 0.28) / 0.72));
+      const fadeEnvelope =
+        foregroundGrain.fadeMode === "fade"
+          ? 1 - easeInCubic(Math.max(0, (life - 0.42) / 0.58))
+          : 1 - shrink;
+      const fade = fadeEnvelope * motionFade;
+      const peakScale =
+        foregroundGrain.basePeakScale *
+        (0.96 + foregroundGrain.strength * 0.92) *
+        p.lerp(1, 2.2, agitationBoost);
+      const sizeScale =
+        p.lerp(foregroundGrain.startScale, peakScale, grow) *
+        p.lerp(1, foregroundGrain.endScale, shrink);
+      const alpha =
+        grain.alpha * foregroundGrain.alphaBoost * Math.max(0, fade);
+
+      if (alpha <= 0.002 || sizeScale <= 0.01) {
+        return;
+      }
+
+      const drawState = getGrainDrawState(target, grain, nowMs, 0);
+      const driftX = foregroundGrain.velocityX * settle;
+      const driftY = foregroundGrain.velocityY * settle;
+      const scaledDrawState = {
+        x: drawState.x + driftX,
+        y: drawState.y + driftY,
+        rotation: drawState.rotation,
+        drawW: drawState.drawW * sizeScale,
+        drawH: drawState.drawH * sizeScale,
+        maskW: drawState.maskW * sizeScale,
+        maskH: drawState.maskH * sizeScale,
+      };
+      const { sx, sy } = getGrainSamplePosition(grain);
+      const ctx = target.drawingContext;
+      const trailScale = p.constrain(motionFade, 0, 1);
+      const trailX = foregroundGrain.velocityX * 0.052;
+      const trailY = foregroundGrain.velocityY * 0.052;
+
+      if (trailScale > 0.06) {
+        const trailPasses = [
+          { offset: 0.28, scale: 0.99, alpha: 0.62 },
+          { offset: 0.7, scale: 0.94, alpha: 0.5 },
+          { offset: 1.2, scale: 0.88, alpha: 0.38 },
+          { offset: 1.8, scale: 0.8, alpha: 0.28 },
+          { offset: 2.5, scale: 0.72, alpha: 0.2 },
+          { offset: 3.3, scale: 0.62, alpha: 0.14 },
+        ];
+
+        for (let i = 0; i < trailPasses.length; i += 1) {
+          const pass = trailPasses[i];
+          drawForegroundSparkPass(
+            ctx,
+            grain,
+            {
+              ...scaledDrawState,
+              x: scaledDrawState.x - trailX * pass.offset,
+              y: scaledDrawState.y - trailY * pass.offset,
+              drawW: scaledDrawState.drawW * pass.scale,
+              drawH: scaledDrawState.drawH * pass.scale,
+              maskW: scaledDrawState.maskW * pass.scale,
+              maskH: scaledDrawState.maskH * pass.scale,
+            },
+            sx,
+            sy,
+            nowMs,
+            alpha * pass.alpha * trailScale
+          );
+        }
+      }
+
+      drawForegroundSparkPass(
+        ctx,
+        grain,
+        scaledDrawState,
+        sx,
+        sy,
+        nowMs,
+        alpha
+      );
+    }
+
     function makeGrainSheet(grainSize) {
       const stepX = grainSize * 0.5;
       const stepY = grainSize * 0.46;
@@ -883,10 +1174,13 @@ export function mountSketch(
 
       try {
         const loadedImages = await Promise.all(
-          [...grainImageUrls, droneXfadeImageUrl].map((url) => p.loadImage(url))
+          [...grainImageUrls, droneXfadeImageUrl, foregroundGrainImageUrl].map(
+            (url) => p.loadImage(url)
+          )
         );
         sourceImages = loadedImages.slice(0, grainImageUrls.length);
-        droneXfadeImage = loadedImages[loadedImages.length - 1];
+        droneXfadeImage = loadedImages[loadedImages.length - 2];
+        foregroundSourceImage = loadedImages[loadedImages.length - 1];
       } catch (error) {
         console.error("Failed to load grain images", error);
       }
@@ -941,8 +1235,19 @@ export function mountSketch(
         1,
         Math.pow(Math.max(0, rawDrone2Level), 0.45) * 2.0
       );
+      const rawAgitationLevel = getAgitationLevel ? getAgitationLevel() : 0;
+      const targetAgitationLevel = p.constrain(rawAgitationLevel, 0, 1);
+      const targetDragTremble =
+        p.mouseIsPressed && gestureActive
+          ? p.constrain((leadDragDistance - 24) / 2100, 0, 1)
+          : 0;
       smoothedAudioLevel += (targetAudioLevel - smoothedAudioLevel) * 0.12;
       smoothedDrone2Level += (targetDrone2Level - smoothedDrone2Level) * 0.09;
+      smoothedAgitationLevel +=
+        (targetAgitationLevel - smoothedAgitationLevel) * 0.08;
+      smoothedDragTremble +=
+        (targetDragTremble - smoothedDragTremble) *
+        (targetDragTremble > smoothedDragTremble ? 0.12 : 0.08);
       for (let i = activeArpPulses.length - 1; i >= 0; i -= 1) {
         if (now - activeArpPulses[i].createdAt >= activeArpPulses[i].duration) {
           activeArpPulses.splice(i, 1);
@@ -951,6 +1256,14 @@ export function mountSketch(
       for (let i = activeLeadSmears.length - 1; i >= 0; i -= 1) {
         if (now - activeLeadSmears[i].createdAt >= activeLeadSmears[i].duration) {
           activeLeadSmears.splice(i, 1);
+        }
+      }
+      for (let i = activeArpForegroundGrains.length - 1; i >= 0; i -= 1) {
+        if (
+          now - activeArpForegroundGrains[i].createdAt >=
+          activeArpForegroundGrains[i].duration
+        ) {
+          activeArpForegroundGrains.splice(i, 1);
         }
       }
       const droneXfadeClusterStates = getDroneXfadeClusterStates(now);
@@ -993,7 +1306,8 @@ export function mountSketch(
           now,
           smoothedAudioLevel,
           arpBoost,
-          droneXfadeMix
+          droneXfadeMix,
+          smoothedDragTremble
         );
       }
 
@@ -1014,6 +1328,35 @@ export function mountSketch(
           smoothedAudioLevel,
           smear.grain.droneXfadeBias * smoothedDrone2Level * 0.18
         );
+      }
+
+      for (let i = 0; i < activeArpForegroundGrains.length; i += 1) {
+        const foregroundGrain = activeArpForegroundGrains[i];
+        foregroundGrain.grain.x += foregroundGrain.velocityX * (dtMs * 0.001);
+        foregroundGrain.grain.y += foregroundGrain.velocityY * (dtMs * 0.001);
+        foregroundGrain.velocityX *= foregroundGrain.drag;
+        foregroundGrain.velocityY *= foregroundGrain.drag;
+        updateGrainBlobMorph(foregroundGrain.grain, dtMs * 1.2);
+        foregroundGrain.grain.morphProgress +=
+          (dtMs / foregroundGrain.grain.morphDuration) * 1.45;
+
+        while (foregroundGrain.grain.morphProgress >= 1) {
+          foregroundGrain.grain.morphProgress -= 1;
+          setNextGrainTarget(foregroundGrain.grain);
+        }
+      }
+
+      for (let i = activeArpForegroundGrains.length - 1; i >= 0; i -= 1) {
+        const foregroundGrain = activeArpForegroundGrains[i];
+        const age = now - foregroundGrain.createdAt;
+        const motionMagnitude = Math.hypot(
+          foregroundGrain.velocityX,
+          foregroundGrain.velocityY
+        );
+
+        if (age > 220 && motionMagnitude < 8) {
+          activeArpForegroundGrains.splice(i, 1);
+        }
       }
 
       grainBuffer.blendMode(p.BLEND);
@@ -1043,6 +1386,10 @@ export function mountSketch(
         mainCtx.restore();
       }
 
+      for (let i = 0; i < activeArpForegroundGrains.length; i += 1) {
+        drawForegroundGrain(p, activeArpForegroundGrains[i], now);
+      }
+
       p.blendMode(p.BLEND);
     };
 
@@ -1066,6 +1413,10 @@ export function mountSketch(
 
   instance.registerArpPulse = (pulse) => {
     registerArpPulseFn(pulse);
+  };
+
+  instance.registerArpForegroundSpark = (spark) => {
+    registerArpForegroundSparkFn(spark);
   };
 
   const remove = instance.remove.bind(instance);

@@ -2644,7 +2644,12 @@ export function createEngine() {
             velocity,
         });
 
-        return notes;
+        return {
+            notes,
+            noteDuration,
+            noteSpacing,
+            velocity,
+        };
     }
 
     let isStarted = false;
@@ -2768,7 +2773,7 @@ export function createEngine() {
         arpVoice.setPanner(pan, 0.03);
 
 
-        const notes = playArpRun({
+        const run = playArpRun({
             numNotes: noteCount,
             pitchRange: [minPitch, maxPitch],
             repeatPitches: false,
@@ -2784,14 +2789,14 @@ export function createEngine() {
         updateSystemState(Tone.now(), 0.08, 0.12);
 
         // console.log("gesture arp", {
-        //     notes,
+        //     notes: run.notes,
         //     speed: effectiveSpeed.toFixed(2),
         //     numNotes: noteCount,
         //     pitchRange: [minPitch, maxPitch],
         //     noteSpacing: noteSpacing.toFixed(3),
         // });
 
-        return notes;
+        return run;
     }
 
     const start = () => {
@@ -2996,6 +3001,9 @@ export function createEngine() {
             const meterValue = drone2VisualMeter.getValue();
             const level = Array.isArray(meterValue) ? meterValue[0] : meterValue;
             return Number.isFinite(level) ? clamp(level, 0, 1) : 0;
+        },
+        getVisualAgitation() {
+            return clamp(systemState.agitation, 0, 1);
         },
         getPerfStats() {
             return { ...perfStats };

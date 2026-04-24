@@ -33,6 +33,7 @@ function App() {
   const controlPeakMsRef = useRef(0);
   const longTaskCountRef = useRef(0);
   const hasLoggedMovementControlRef = useRef(false);
+  const latestControlRef = useRef(null);
 
   const p5ContainerRef = useRef(null);
 
@@ -116,12 +117,14 @@ function App() {
     if (!p5ContainerRef.current) return;
 
     let instance = null;
+    const arpSparkTimeouts = new Set();
 
     instance = mountSketch(
       p5ContainerRef.current,
       (ctl) => {
         const controlStart = performance.now();
         frameCountRef.current += 1;
+        latestControlRef.current = ctl;
 
         if (!hasLoggedMovementControlRef.current && ctl.rawSpeed > 0) {
           hasLoggedMovementControlRef.current = true;
@@ -134,17 +137,47 @@ function App() {
         }
 
         engineRef.current?.updateLeadGesture?.(ctl);
-        const arpNotes = engineRef.current?.triggerArpGesture?.(ctl);
-        if (arpNotes) {
+        const arpRun = engineRef.current?.triggerArpGesture?.(ctl);
+        if (arpRun) {
           instance?.registerArpPulse?.({
             x: ctl.x,
             y: ctl.y,
+            dx: ctl.dx,
+            dy: ctl.dy,
+            speedPxPerSecond: ctl.speedPxPerSecond,
+            noteCount: arpRun.notes.length,
             strength: Math.min(
               3.2,
-              1.2 + arpNotes.length * 0.16 + ctl.speed * 1.4
+              1.2 + arpRun.notes.length * 0.16 + ctl.speed * 1.4
             ),
-            radius: Math.min(260, 120 + arpNotes.length * 10 + ctl.speed * 90),
-            duration: 700 + arpNotes.length * 55,
+            radius: Math.min(
+              260,
+              120 + arpRun.notes.length * 10 + ctl.speed * 90
+            ),
+            duration: 700 + arpRun.notes.length * 55,
+          });
+
+          arpRun.notes.forEach((_, index) => {
+            const delayMs = Math.max(0, Math.round(index * arpRun.noteSpacing * 1000));
+            const timeoutId = window.setTimeout(() => {
+              arpSparkTimeouts.delete(timeoutId);
+              const sparkCtl = latestControlRef.current ?? ctl;
+              instance?.registerArpForegroundSpark?.({
+                x: sparkCtl.x,
+                y: sparkCtl.y,
+                dx: sparkCtl.dx,
+                dy: sparkCtl.dy,
+                speedPxPerSecond: sparkCtl.speedPxPerSecond,
+                noteIndex: index,
+                noteCount: arpRun.notes.length,
+                strength: Math.min(
+                  1.8,
+                  0.92 + sparkCtl.speed * 0.7 + arpRun.velocity * 0.22
+                ),
+              });
+            }, delayMs);
+
+            arpSparkTimeouts.add(timeoutId);
           });
         }
 
@@ -163,10 +196,13 @@ function App() {
         engineRef.current?.triggerPercClickGate?.(ctl);
       },
       () => engineRef.current?.getVisualLevel?.() ?? 0,
-      () => engineRef.current?.getDrone2VisualLevel?.() ?? 0
+      () => engineRef.current?.getDrone2VisualLevel?.() ?? 0,
+      () => engineRef.current?.getVisualAgitation?.() ?? 0
     );
 
     return () => {
+      arpSparkTimeouts.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      arpSparkTimeouts.clear();
       instance.remove(); // important: cleanup p5 on unmount
     };
   }, []);
